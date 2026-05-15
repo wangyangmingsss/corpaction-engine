@@ -1,0 +1,293 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.24;
+
+import {AccessControlUpgradeable} from
+    "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol";
+import {UUPSUpgradeable} from
+    "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
+import {PausableUpgradeable} from
+    "@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol";
+import {ReentrancyGuardUpgradeable} from
+    "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
+import {IActionRegistry} from "../interfaces/IActionRegistry.sol";
+import {IValidatorManager} from "../interfaces/IValidatorManager.sol";
+import {IActionExecutor} from "../interfaces/IActionExecutor.sol";
+import {ICorpActionTypes} from "../interfaces/ICorpActionTypes.sol";
+
+contract ActionRegistry is
+    IActionRegistry,
+    ICorpActionTypes,
+    AccessControlUpgradeable,
+    UUPSUpgradeable,
+    PausableUpgradeable,
+    ReentrancyGuardUpgradeable
+{
+    bytes32 public constant PROPOSER_ROLE = keccak256("PROPOSER_ROLE");
+    bytes32 public constant EXECUTOR_ROLE = keccak256("EXECUTOR_ROLE");
+    bytes32 public constant UPGRADER_ROLE = keccak256("UPGRADER_ROLE");
+
+    IValidatorManager public validatorManager;
+
+    mapping(bytes32 => ActionIntent) private _intents;
+    mapping(bytes32 => mapping(address => bool)) private _validations;
+    mapping(bytes32 => uint256) private _validationCount;
+    mapping(ActionType => address) private _executors;
+    mapping(ActionType => uint256) private _timelocks;
+    mapping(address => bytes32[]) private _tokenActions;
+    bytes32[] private _allIntents;
+    mapping(bytes32 => uint256) private _executionTime;
+
+    uint256 public intentTTL;
+
+    event ActionProposed(bytes32 indexed intentId, ActionType indexed actionType,
+        address indexed targetToken, string ticker);
+    event ActionValidated(bytes32 indexed intentId, address validator,
+        uint256 count, uint256 required);
+    event ActionQueued(bytes32 indexed intentId, uint256 executionTime);
+    event ActionExecuting(bytes32 indexed intentId);
+    event ActionExecuted(bytes32 indexed intentId, ActionType indexed actionType,
+        address indexed targetToken, bytes result);
+    event ActionCancelled(bytes32 indexed intentId, string reason);
+    event ActionReversed(bytes32 indexed intentId, string reason);
+    event ActionFailed(bytes32 indexed intentId, string reason);
+    event ExecutorRegistered(ActionType indexed actionType, address executor);
+    event TimelockUpdated(ActionType indexed actionType, uint256 duration);
+    event EmergencyPaused(address indexed triggeredBy);
+    event EmergencyResumed(uint256 validatorCount);
+
+    error InvalidState(bytes32 intentId, ActionState current, ActionState expected);
+    error InsufficientValidations(uint256 have, uint256 need);
+    error TimelockNotExpired(bytes32 intentId, uint256 readyAt);
+    error AlreadyValidated(bytes32 intentId, address validator);
+    error IntentExpired(bytes32 intentId);
+    error ExecutorNotRegistered(ActionType actionType);
+    error IntentNotFound(bytes32 intentId);
+    error DuplicateIntent(bytes32 intentId);
+
+    /// @custom:oz-upgrades-unsafe-allow constructor
+    constructor() { _disableInitializers(); }
+
+    function initialize(
+        address _validatorManager,
+        uint256 _intentTTL
+    ) external initializer {
+        __AccessControl_init();
+        __UUPSUpgradeable_init();
+        __Pausable_init();
+        __ReentrancyGuard_init();
+
+        validatorManager = IValidatorManager(_validatorManager);
+        intentTTL = _intentTTL;
+
+        _grantRole(DEFAULT_ADMIN_ROLE, msg.sender);
+        _grantRole(UPGRADER_ROLE, msg.sender);
+    }
+
+    // ========== PROPOSE ==========
+
+    function proposeAction(
+        ActionIntent calldata intent,
+        bytes calldata signature
+    ) external whenNotPaused returns (bytes32 intentId) {
+        intentId = intent.intentId;
+        if (_intents[intentId].createdAt != 0) revert DuplicateIntent(intentId);
+
+        address signer = validatorManager.recoverSigner(
+            keccak256(abi.encode(intent)), signature
+        );
+        require(validatorManager.isValidator(signer), "Not a validator");
+
+        _intents[intentId] = intent;
+        _intents[intentId].state = ActionState.PROPOSED;
+        _intents[intentId].createdAt = block.timestamp;
+        _allIntents.push(intentId);
+        _tokenActions[intent.targetToken].push(intentId);
+
+        _validations[intentId][signer] = true;
+        _validationCount[intentId] = 1;
+
+        emit ActionProposed(intentId, intent.actionType,
+            intent.targetToken, intent.ticker);
+
+        _checkQuorum(intentId);
+    }
+
+    // ========== VALIDATE ==========
+
+    function validateAction(
+        bytes32 intentId,
+        bytes calldata signature
+    ) external whenNotPaused {
+        ActionIntent storage intent = _getIntent(intentId);
+        if (intent.state != ActionState.PROPOSED)
+            revert InvalidState(intentId, intent.state, ActionState.PROPOSED);
+        if (block.timestamp > intent.createdAt + intentTTL)
+            revert IntentExpired(intentId);
+
+        address signer = validatorManager.recoverSigner(
+            keccak256(abi.encode(
+                intentId, intent.actionType,
+                intent.targetToken, intent.actionParams
+            )),
+            signature
+        );
+        require(validatorManager.isValidator(signer), "Not a validator");
+        if (_validations[intentId][signer])
+            revert AlreadyValidated(intentId, signer);
+
+        _validations[intentId][signer] = true;
+        _validationCount[intentId]++;
+
+        uint256 required = validatorManager.getQuorum(intent.actionType);
+        emit ActionValidated(intentId, signer,
+            _validationCount[intentId], required);
+
+        _checkQuorum(intentId);
+    }
+
+    // ========== EXECUTE ==========
+
+    function executeAction(
+        bytes32 intentId
+    ) external nonReentrant whenNotPaused {
+        ActionIntent storage intent = _getIntent(intentId);
+        if (intent.state != ActionState.QUEUED)
+            revert InvalidState(intentId, intent.state, ActionState.QUEUED);
+        if (block.timestamp < _executionTime[intentId])
+            revert TimelockNotExpired(intentId, _executionTime[intentId]);
+
+        address executor = _executors[intent.actionType];
+        if (executor == address(0))
+            revert ExecutorNotRegistered(intent.actionType);
+
+        intent.state = ActionState.EXECUTING;
+        emit ActionExecuting(intentId);
+
+        try IActionExecutor(executor).execute(intent) returns (bytes memory result) {
+            intent.state = ActionState.EXECUTED;
+            intent.executedAt = block.timestamp;
+            emit ActionExecuted(intentId, intent.actionType,
+                intent.targetToken, result);
+        } catch Error(string memory reason) {
+            intent.state = ActionState.FAILED;
+            emit ActionFailed(intentId, reason);
+        } catch {
+            intent.state = ActionState.FAILED;
+            emit ActionFailed(intentId, "Unknown execution error");
+        }
+    }
+
+    // ========== CANCEL ==========
+
+    function cancelAction(
+        bytes32 intentId,
+        string calldata reason
+    ) external {
+        ActionIntent storage intent = _getIntent(intentId);
+        require(
+            intent.state == ActionState.PROPOSED ||
+            intent.state == ActionState.VALIDATED ||
+            intent.state == ActionState.QUEUED ||
+            intent.state == ActionState.FAILED ||
+            intent.state == ActionState.PAUSED,
+            "Cannot cancel in current state"
+        );
+        require(validatorManager.isValidator(msg.sender), "Not a validator");
+
+        intent.state = ActionState.CANCELLED;
+        emit ActionCancelled(intentId, reason);
+    }
+
+    // ========== EMERGENCY ==========
+
+    function emergencyPause() external {
+        require(validatorManager.isValidator(msg.sender), "Not a validator");
+        _pause();
+        emit EmergencyPaused(msg.sender);
+    }
+
+    function emergencyResume(bytes[] calldata signatures) external {
+        uint256 required = validatorManager.getSuperMajority();
+        require(signatures.length >= required, "Insufficient signatures");
+
+        bytes32 resumeHash = keccak256(
+            abi.encodePacked("EMERGENCY_RESUME", block.chainid, address(this))
+        );
+
+        uint256 validCount = 0;
+        for (uint256 i = 0; i < signatures.length; i++) {
+            address signer = validatorManager.recoverSigner(
+                resumeHash, signatures[i]
+            );
+            if (validatorManager.isValidator(signer)) validCount++;
+        }
+        require(validCount >= required, "Not enough valid signatures");
+
+        _unpause();
+        emit EmergencyResumed(validCount);
+    }
+
+    // ========== ADMIN ==========
+
+    function registerExecutor(
+        ActionType actionType,
+        address executor
+    ) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        _executors[actionType] = executor;
+        emit ExecutorRegistered(actionType, executor);
+    }
+
+    function setTimelock(
+        ActionType actionType,
+        uint256 duration
+    ) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        _timelocks[actionType] = duration;
+        emit TimelockUpdated(actionType, duration);
+    }
+
+    // ========== QUERIES ==========
+
+    function getAction(bytes32 intentId)
+        external view returns (ActionIntent memory) {
+        return _intents[intentId];
+    }
+
+    function getActionsByToken(address token)
+        external view returns (bytes32[] memory) {
+        return _tokenActions[token];
+    }
+
+    function getValidationCount(bytes32 intentId)
+        external view returns (uint256) {
+        return _validationCount[intentId];
+    }
+
+    function getExecutionTime(bytes32 intentId)
+        external view returns (uint256) {
+        return _executionTime[intentId];
+    }
+
+    // ========== INTERNAL ==========
+
+    function _checkQuorum(bytes32 intentId) internal {
+        ActionIntent storage intent = _intents[intentId];
+        uint256 required = validatorManager.getQuorum(intent.actionType);
+        if (_validationCount[intentId] >= required) {
+            intent.state = ActionState.VALIDATED;
+            uint256 timelock = _timelocks[intent.actionType];
+            intent.state = ActionState.QUEUED;
+            _executionTime[intentId] = block.timestamp + timelock;
+            emit ActionQueued(intentId, _executionTime[intentId]);
+        }
+    }
+
+    function _getIntent(bytes32 intentId)
+        internal view returns (ActionIntent storage) {
+        if (_intents[intentId].createdAt == 0)
+            revert IntentNotFound(intentId);
+        return _intents[intentId];
+    }
+
+    function _authorizeUpgrade(address newImpl)
+        internal override onlyRole(UPGRADER_ROLE) {}
+}

@@ -1,0 +1,20 @@
+{
+  "name": "@corpaction/sdk",
+  "version": "1.0.0",
+  "description": "TypeScript SDK for CorpAction Engine — Corporate Action Oracle for Tokenized Equities",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "prepublishOnly": "npm run build"
+  },
+  "dependencies": {
+    "ethers": "^6.11.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "typescript": "^5.4.0"
+  },
+  "keywords": ["corpaction", "corporate-action", "tokenized-equity", "arbitrum", "robinhood-chain"],
+  "license": "MIT"
+}

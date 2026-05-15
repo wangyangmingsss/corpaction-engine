@@ -1,0 +1,31 @@
+# Dependencies
+node_modules/
+lib/
+
+# Build artifacts
+out/
+cache/
+dist/
+broadcast/
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Coverage
+lcov.info
+coverage/
+
+# Foundry
+cache_forge/

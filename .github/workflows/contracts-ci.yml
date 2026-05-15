@@ -1,0 +1,49 @@
+name: Smart Contracts CI
+on:
+  push:
+    paths: ['packages/contracts/**']
+  pull_request:
+    paths: ['packages/contracts/**']
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { submodules: recursive }
+      - uses: foundry-rs/foundry-toolchain@v1
+      - name: Build
+        run: cd packages/contracts && forge build --sizes
+      - name: Unit Tests
+        run: cd packages/contracts && forge test -vvv
+      - name: Fuzz Tests
+        run: cd packages/contracts && forge test --match-path 'test/fuzz/*' -vvv
+      - name: Coverage
+        run: cd packages/contracts && forge coverage --report lcov
+
+  gas-report:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { submodules: recursive }
+      - uses: foundry-rs/foundry-toolchain@v1
+      - name: Gas Report
+        run: cd packages/contracts && forge test --gas-report
+
+  deploy-testnet:
+    needs: build-and-test
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: testnet
+    steps:
+      - uses: actions/checkout@v4
+        with: { submodules: recursive }
+      - uses: foundry-rs/foundry-toolchain@v1
+      - name: Deploy
+        env:
+          RPC_URL: ${{ secrets.RPC_URL }}
+          PRIVATE_KEY: ${{ secrets.DEPLOYER_PRIVATE_KEY }}
+        run: |
+          cd packages/contracts
+          forge script script/Deploy.s.sol \
+            --rpc-url $RPC_URL --broadcast --verify

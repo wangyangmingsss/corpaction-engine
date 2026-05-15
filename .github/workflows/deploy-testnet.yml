@@ -1,0 +1,29 @@
+name: Deploy to Testnet
+on:
+  workflow_dispatch:
+    inputs:
+      network:
+        description: 'Target network'
+        required: true
+        default: 'robinhood_testnet'
+        type: choice
+        options:
+          - robinhood_testnet
+          - arbitrum_sepolia
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: testnet
+    steps:
+      - uses: actions/checkout@v4
+        with: { submodules: recursive }
+      - uses: foundry-rs/foundry-toolchain@v1
+      - name: Deploy Contracts
+        env:
+          RPC_URL: ${{ secrets.RPC_URL }}
+          PRIVATE_KEY: ${{ secrets.DEPLOYER_PRIVATE_KEY }}
+        run: |
+          cd packages/contracts
+          forge script script/Deploy.s.sol \
+            --rpc-url $RPC_URL --broadcast --verify

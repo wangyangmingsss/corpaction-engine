@@ -1,0 +1,43 @@
+name: Services CI
+on:
+  push:
+    paths: ['packages/services/**', 'packages/sdk/**']
+  pull_request:
+    paths: ['packages/services/**', 'packages/sdk/**']
+
+jobs:
+  build-ingestion:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '20' }
+      - name: Install & Build
+        run: cd packages/services/ingestion && npm ci && npm run build
+
+  build-processor:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '20' }
+      - name: Install & Build
+        run: cd packages/services/processor && npm ci && npm run build
+
+  build-validator:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '20' }
+      - name: Install & Build
+        run: cd packages/services/validator && npm ci && npm run build
+
+  build-sdk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '20' }
+      - name: Install & Build
+        run: cd packages/sdk && npm ci && npm run build

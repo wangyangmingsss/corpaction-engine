@@ -1,0 +1,22 @@
+name: Security Audit
+on:
+  push:
+    branches: [main]
+    paths: ['packages/contracts/**']
+  pull_request:
+    paths: ['packages/contracts/**']
+
+jobs:
+  slither:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { submodules: recursive }
+      - uses: foundry-rs/foundry-toolchain@v1
+      - name: Build
+        run: cd packages/contracts && forge build
+      - name: Slither Analysis
+        uses: crytic/slither-action@v0.4.0
+        with:
+          slither-args: packages/contracts/
+          fail-on: high
