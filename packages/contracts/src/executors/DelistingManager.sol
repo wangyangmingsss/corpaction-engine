@@ -35,6 +35,7 @@ contract DelistingManager is
         address settlementToken; // USDC
         bytes32 merkleRoot;
         uint256 totalPool;
+        uint256 claimDeadline;   // Deadline after which claims are rejected
     }
 
     struct DelistingState {
@@ -42,6 +43,9 @@ contract DelistingManager is
         DelistingPhase phase;
         bool initialized;
         uint256 totalDistributed;
+        address targetToken;     // Actual token being delisted
+        bool disputed;           // Whether the delisting is under dispute
+        string disputeReason;    // Reason for the dispute
     }
 
     address public actionRegistry;
@@ -56,11 +60,17 @@ contract DelistingManager is
     event DelistingLiquidated(bytes32 indexed intentId, address indexed claimer,
         uint256 amount);
     event DelistingFrozen(bytes32 indexed intentId, address indexed token);
+    event DelistingDisputed(bytes32 indexed intentId, address indexed validator,
+        string reason);
+    event DelistingRolledBack(bytes32 indexed intentId, address indexed validator);
 
     error NotInitialized(bytes32 intentId);
     error AlreadyClaimed(bytes32 intentId, address claimer);
     error InvalidPhase(bytes32 intentId, DelistingPhase current, DelistingPhase expected);
     error InvalidMerkleProof();
+    error ClaimDeadlineExpired(bytes32 intentId);
+    error DelistingIsDisputed(bytes32 intentId);
+    error DelistingNotDisputed(bytes32 intentId);
 
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() { _disableInitializers(); }
@@ -84,7 +94,10 @@ contract DelistingManager is
             params: params,
             phase: DelistingPhase.ANNOUNCED,
             initialized: true,
-            totalDistributed: 0
+            totalDistributed: 0,
+            targetToken: intent.targetToken,
+            disputed: false,
+            disputeReason: ""
         });
 
         emit DelistingAnnounced(intent.intentId, intent.targetToken, params.finalPrice);
@@ -95,15 +108,17 @@ contract DelistingManager is
     function advancePhase(bytes32 intentId) external {
         DelistingState storage state = delistings[intentId];
         require(state.initialized, "Not initialized");
+        if (state.disputed) revert DelistingIsDisputed(intentId);
 
         if (state.phase == DelistingPhase.ANNOUNCED &&
             block.timestamp >= state.params.sellOnlyTime) {
             state.phase = DelistingPhase.SELL_ONLY;
-            emit DelistingSellOnly(intentId, address(0));
+            emit DelistingSellOnly(intentId, state.targetToken);
         } else if (state.phase == DelistingPhase.SELL_ONLY &&
             block.timestamp >= state.params.priceLockTime) {
             state.phase = DelistingPhase.PRICE_LOCKED;
             emit DelistingPriceLocked(intentId, state.params.finalPrice);
+        } else if (state.phase == DelistingPhase.PRICE_LOCKED) {
             state.phase = DelistingPhase.LIQUIDATING;
         }
     }
@@ -119,6 +134,9 @@ contract DelistingManager is
             revert InvalidPhase(intentId, state.phase, DelistingPhase.LIQUIDATING);
         if (delistingClaimed[intentId][msg.sender])
             revert AlreadyClaimed(intentId, msg.sender);
+        if (state.params.claimDeadline != 0 && block.timestamp > state.params.claimDeadline)
+            revert ClaimDeadlineExpired(intentId);
+        if (state.disputed) revert DelistingIsDisputed(intentId);
 
         bytes32 leaf = keccak256(
             bytes.concat(keccak256(abi.encode(msg.sender, amount)))
@@ -138,7 +156,34 @@ contract DelistingManager is
         require(state.initialized, "Not initialized");
         require(state.phase == DelistingPhase.LIQUIDATING, "Not in liquidation phase");
         state.phase = DelistingPhase.FROZEN;
-        emit DelistingFrozen(intentId, address(0));
+        emit DelistingFrozen(intentId, state.targetToken);
+    }
+
+    function disputeDelisting(bytes32 intentId, string calldata reason) external {
+        DelistingState storage state = delistings[intentId];
+        require(state.initialized, "Not initialized");
+        require(state.phase != DelistingPhase.FROZEN, "Already frozen");
+        require(!state.disputed, "Already disputed");
+        require(bytes(reason).length > 0, "Reason required");
+
+        state.disputed = true;
+        state.disputeReason = reason;
+
+        emit DelistingDisputed(intentId, msg.sender, reason);
+    }
+
+    function rollbackDelisting(bytes32 intentId) external {
+        DelistingState storage state = delistings[intentId];
+        require(state.initialized, "Not initialized");
+        if (!state.disputed) revert DelistingNotDisputed(intentId);
+        require(state.phase != DelistingPhase.FROZEN, "Already frozen");
+
+        state.phase = DelistingPhase.NONE;
+        state.initialized = false;
+        state.disputed = false;
+        state.disputeReason = "";
+
+        emit DelistingRolledBack(intentId, msg.sender);
     }
 
     function _authorizeUpgrade(address) internal view override {

@@ -43,9 +43,12 @@ contract DividendDistributor is
     mapping(bytes32 => mapping(address => bool)) public claimed;
 
     event DividendInitialized(bytes32 indexed intentId, address indexed token,
-        uint256 totalAmount, bytes32 merkleRoot, uint256 claimDeadline);
+        uint256 totalAmount, bytes32 merkleRoot, uint256 claimDeadline,
+        uint256 snapshotBlock);
     event DividendClaimed(bytes32 indexed intentId, address indexed claimer,
         uint256 amount);
+    event DividendWithheld(bytes32 indexed intentId, address indexed holder,
+        uint256 grossAmount, uint256 withheld, uint256 netAmount);
     event DividendReclaimed(bytes32 indexed intentId, uint256 amount);
 
     error AlreadyClaimed(bytes32 intentId, address claimer);
@@ -86,7 +89,8 @@ contract DividendDistributor is
 
         emit DividendInitialized(
             intent.intentId, intent.targetToken,
-            params.totalAmount, params.merkleRoot, params.claimDeadline
+            params.totalAmount, params.merkleRoot, params.claimDeadline,
+            params.snapshotBlock
         );
 
         return abi.encode(params.totalAmount, params.merkleRoot);
@@ -112,10 +116,23 @@ contract DividendDistributor is
             revert InvalidMerkleProof();
 
         claimed[intentId][msg.sender] = true;
-        state.totalClaimed += amount;
 
-        IERC20(state.params.paymentToken).safeTransfer(msg.sender, amount);
-        emit DividendClaimed(intentId, msg.sender, amount);
+        if (state.params.withholding && state.params.withholdingBps > 0) {
+            uint256 withheld = (amount * state.params.withholdingBps) / 10000;
+            uint256 netAmount = amount - withheld;
+            // Transfer withheld to treasury
+            IERC20(state.params.paymentToken).safeTransfer(treasury, withheld);
+            // Transfer net to claimer
+            IERC20(state.params.paymentToken).safeTransfer(msg.sender, netAmount);
+            emit DividendClaimed(intentId, msg.sender, netAmount);
+            emit DividendWithheld(intentId, msg.sender, amount, withheld, netAmount);
+            // Track total as full amount for accounting
+            state.totalClaimed += amount;
+        } else {
+            state.totalClaimed += amount;
+            IERC20(state.params.paymentToken).safeTransfer(msg.sender, amount);
+            emit DividendClaimed(intentId, msg.sender, amount);
+        }
     }
 
     function reclaimExpired(bytes32 intentId) external {
@@ -132,6 +149,11 @@ contract DividendDistributor is
             IERC20(state.params.paymentToken).safeTransfer(treasury, remaining);
             emit DividendReclaimed(intentId, remaining);
         }
+    }
+
+    function getSnapshotBlock(bytes32 intentId) external view returns (uint256) {
+        require(dividends[intentId].initialized, "Dividend not initialized");
+        return dividends[intentId].params.snapshotBlock;
     }
 
     function _authorizeUpgrade(address) internal view override {

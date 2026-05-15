@@ -13,6 +13,8 @@ import {IActionRegistry} from "../interfaces/IActionRegistry.sol";
 import {IValidatorManager} from "../interfaces/IValidatorManager.sol";
 import {IActionExecutor} from "../interfaces/IActionExecutor.sol";
 import {ICorpActionTypes} from "../interfaces/ICorpActionTypes.sol";
+import {IAttestationRegistry} from "../interfaces/IAttestationRegistry.sol";
+import {IFeeCollector} from "../interfaces/IFeeCollector.sol";
 
 contract ActionRegistry is
     IActionRegistry,
@@ -38,6 +40,10 @@ contract ActionRegistry is
     mapping(bytes32 => uint256) private _executionTime;
 
     uint256 public intentTTL;
+    uint256 public queuedTTL;
+
+    IFeeCollector public feeCollector;
+    IAttestationRegistry public attestationRegistry;
 
     event ActionProposed(bytes32 indexed intentId, ActionType indexed actionType,
         address indexed targetToken, string ticker);
@@ -54,6 +60,12 @@ contract ActionRegistry is
     event TimelockUpdated(ActionType indexed actionType, uint256 duration);
     event EmergencyPaused(address indexed triggeredBy);
     event EmergencyResumed(uint256 validatorCount);
+    event ActionExpired(bytes32 indexed intentId);
+    event FeeCollected(bytes32 indexed intentId, uint256 fee);
+    event QuorumReached(bytes32 indexed intentId, ActionState state);
+    event FeeCollectorUpdated(address feeCollector);
+    event AttestationRegistryUpdated(address attestationRegistry);
+    event QueuedTTLUpdated(uint256 ttl);
 
     error InvalidState(bytes32 intentId, ActionState current, ActionState expected);
     error InsufficientValidations(uint256 have, uint256 need);
@@ -63,6 +75,9 @@ contract ActionRegistry is
     error ExecutorNotRegistered(ActionType actionType);
     error IntentNotFound(bytes32 intentId);
     error DuplicateIntent(bytes32 intentId);
+    error QueueExpired(bytes32 intentId);
+    error AttestationNotVerified(bytes32 intentId, bytes32 attestationId);
+    error ReverseQuorumNotMet(uint256 have, uint256 need);
 
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() { _disableInitializers(); }
@@ -78,6 +93,7 @@ contract ActionRegistry is
 
         validatorManager = IValidatorManager(_validatorManager);
         intentTTL = _intentTTL;
+        queuedTTL = 7 days;
 
         _grantRole(DEFAULT_ADMIN_ROLE, msg.sender);
         _grantRole(UPGRADER_ROLE, msg.sender);
@@ -145,6 +161,19 @@ contract ActionRegistry is
         _checkQuorum(intentId);
     }
 
+    // ========== QUEUE ==========
+
+    function queueAction(bytes32 intentId) external whenNotPaused {
+        ActionIntent storage intent = _getIntent(intentId);
+        if (intent.state != ActionState.VALIDATED)
+            revert InvalidState(intentId, intent.state, ActionState.VALIDATED);
+
+        uint256 timelock = _timelocks[intent.actionType];
+        intent.state = ActionState.QUEUED;
+        _executionTime[intentId] = block.timestamp + timelock;
+        emit ActionQueued(intentId, _executionTime[intentId]);
+    }
+
     // ========== EXECUTE ==========
 
     function executeAction(
@@ -155,10 +184,27 @@ contract ActionRegistry is
             revert InvalidState(intentId, intent.state, ActionState.QUEUED);
         if (block.timestamp < _executionTime[intentId])
             revert TimelockNotExpired(intentId, _executionTime[intentId]);
+        if (queuedTTL > 0 && block.timestamp > _executionTime[intentId] + queuedTTL)
+            revert QueueExpired(intentId);
+
+        // Verify source attestation exists and is verified
+        if (address(attestationRegistry) != address(0)) {
+            bytes32 attId = intent.sourceAttestation;
+            require(
+                attestationRegistry.isVerified(attId),
+                "Source attestation not verified"
+            );
+        }
 
         address executor = _executors[intent.actionType];
         if (executor == address(0))
             revert ExecutorNotRegistered(intent.actionType);
+
+        // Collect fee before execution
+        if (address(feeCollector) != address(0)) {
+            uint256 fee = feeCollector.collectFee(intent.actionType, 0);
+            emit FeeCollected(intentId, fee);
+        }
 
         intent.state = ActionState.EXECUTING;
         emit ActionExecuting(intentId);
@@ -175,6 +221,60 @@ contract ActionRegistry is
             intent.state = ActionState.FAILED;
             emit ActionFailed(intentId, "Unknown execution error");
         }
+    }
+
+    // ========== REVERSE ==========
+
+    function reverseAction(
+        bytes32 intentId,
+        string calldata reason,
+        bytes[] calldata signatures
+    ) external whenNotPaused {
+        ActionIntent storage intent = _getIntent(intentId);
+        if (intent.state != ActionState.EXECUTED)
+            revert InvalidState(intentId, intent.state, ActionState.EXECUTED);
+
+        uint256 totalValidators = validatorManager.getValidatorCount();
+        require(signatures.length >= totalValidators, "Need all validator signatures");
+
+        bytes32 reverseHash = keccak256(
+            abi.encodePacked("REVERSE_ACTION", intentId, reason)
+        );
+
+        uint256 validCount = 0;
+        for (uint256 i = 0; i < signatures.length; i++) {
+            address signer = validatorManager.recoverSigner(
+                reverseHash, signatures[i]
+            );
+            if (validatorManager.isValidator(signer)) validCount++;
+        }
+        if (validCount < totalValidators)
+            revert ReverseQuorumNotMet(validCount, totalValidators);
+
+        intent.state = ActionState.REVERSED;
+        emit ActionReversed(intentId, reason);
+    }
+
+    // ========== EXPIRE ==========
+
+    function expireAction(bytes32 intentId) external whenNotPaused {
+        ActionIntent storage intent = _getIntent(intentId);
+        if (intent.state == ActionState.PROPOSED) {
+            require(
+                block.timestamp > intent.createdAt + intentTTL,
+                "Intent has not expired yet"
+            );
+        } else if (intent.state == ActionState.QUEUED) {
+            require(
+                queuedTTL > 0 && block.timestamp > _executionTime[intentId] + queuedTTL,
+                "Queued action has not expired yet"
+            );
+        } else {
+            revert InvalidState(intentId, intent.state, ActionState.PROPOSED);
+        }
+
+        intent.state = ActionState.EXPIRED;
+        emit ActionExpired(intentId);
     }
 
     // ========== CANCEL ==========
@@ -245,6 +345,27 @@ contract ActionRegistry is
         emit TimelockUpdated(actionType, duration);
     }
 
+    function setFeeCollector(
+        address _feeCollector
+    ) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        feeCollector = IFeeCollector(_feeCollector);
+        emit FeeCollectorUpdated(_feeCollector);
+    }
+
+    function setAttestationRegistry(
+        address _attestationRegistry
+    ) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        attestationRegistry = IAttestationRegistry(_attestationRegistry);
+        emit AttestationRegistryUpdated(_attestationRegistry);
+    }
+
+    function setQueuedTTL(
+        uint256 _queuedTTL
+    ) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        queuedTTL = _queuedTTL;
+        emit QueuedTTLUpdated(_queuedTTL);
+    }
+
     // ========== QUERIES ==========
 
     function getAction(bytes32 intentId)
@@ -274,10 +395,7 @@ contract ActionRegistry is
         uint256 required = validatorManager.getQuorum(intent.actionType);
         if (_validationCount[intentId] >= required) {
             intent.state = ActionState.VALIDATED;
-            uint256 timelock = _timelocks[intent.actionType];
-            intent.state = ActionState.QUEUED;
-            _executionTime[intentId] = block.timestamp + timelock;
-            emit ActionQueued(intentId, _executionTime[intentId]);
+            emit QuorumReached(intentId, ActionState.VALIDATED);
         }
     }
 
