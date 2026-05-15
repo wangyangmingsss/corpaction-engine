@@ -1,4 +1,7 @@
 import { ValidatorNode } from './ValidatorNode';
+import { Logger } from './utils/Logger';
+
+const logger = new Logger('validator', 'main');
 
 async function main() {
   const node = new ValidatorNode(
@@ -9,7 +12,7 @@ async function main() {
   );
 
   process.on('SIGTERM', async () => {
-    console.log('Shutting down validator node...');
+    logger.info('Shutting down validator node...');
     await node.stop();
     process.exit(0);
   });
@@ -18,6 +21,6 @@ async function main() {
 }
 
 main().catch((error) => {
-  console.error('Fatal error:', error);
+  logger.error('Fatal error', { error: String(error) });
   process.exit(1);
 });

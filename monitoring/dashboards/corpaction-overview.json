@@ -1,55 +1,151 @@
 {
+  "__inputs": [
+    {
+      "name": "DS_PROMETHEUS",
+      "label": "Prometheus",
+      "type": "datasource",
+      "pluginId": "prometheus"
+    }
+  ],
   "dashboard": {
+    "id": null,
+    "uid": "corpaction-overview",
     "title": "CorpAction Engine Overview",
     "description": "Real-time monitoring dashboard for CorpAction Engine",
+    "tags": ["corpaction"],
+    "timezone": "browser",
+    "refresh": "10s",
+    "time": {
+      "from": "now-6h",
+      "to": "now"
+    },
     "panels": [
       {
+        "id": 1,
         "title": "Events Ingested (Rate)",
-        "type": "graph",
-        "datasource": "Prometheus",
+        "type": "timeseries",
+        "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+        "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
         "targets": [
-          { "expr": "rate(corpaction_events_ingested_total[5m])" }
-        ]
+          {
+            "expr": "rate(corpaction_events_ingested_total[5m])",
+            "legendFormat": "{{source}}",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": { "unit": "ops" }
+        }
       },
       {
+        "id": 2,
         "title": "Events by Source",
         "type": "piechart",
-        "datasource": "Prometheus",
+        "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+        "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
         "targets": [
-          { "expr": "corpaction_events_ingested_total" }
+          {
+            "expr": "sum by (source) (corpaction_events_ingested_total)",
+            "legendFormat": "{{source}}",
+            "refId": "A"
+          }
         ]
       },
       {
+        "id": 3,
         "title": "Classification Confidence Distribution",
         "type": "bargauge",
-        "datasource": "Prometheus",
+        "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+        "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
         "targets": [
-          { "expr": "corpaction_classified_events_total" }
+          {
+            "expr": "sum by (confidence) (corpaction_classified_events_total)",
+            "legendFormat": "{{confidence}}",
+            "refId": "A"
+          }
         ]
       },
       {
-        "title": "On-Chain Execution Latency",
-        "type": "graph",
-        "datasource": "Prometheus",
+        "id": 4,
+        "title": "On-Chain Execution Latency (p95)",
+        "type": "timeseries",
+        "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+        "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
         "targets": [
-          { "expr": "histogram_quantile(0.95, corpaction_execution_latency_seconds_bucket)" }
-        ]
+          {
+            "expr": "histogram_quantile(0.95, sum(rate(corpaction_execution_latency_seconds_bucket[5m])) by (le))",
+            "legendFormat": "p95 latency",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": { "unit": "s" }
+        }
       },
       {
+        "id": 5,
         "title": "Validator Health",
         "type": "stat",
-        "datasource": "Prometheus",
+        "gridPos": { "h": 4, "w": 6, "x": 0, "y": 16 },
+        "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
         "targets": [
-          { "expr": "corpaction_validators_online" }
+          {
+            "expr": "corpaction_validators_online",
+            "legendFormat": "Online Validators",
+            "refId": "A"
+          }
         ]
       },
       {
+        "id": 6,
         "title": "TX Failure Rate",
-        "type": "graph",
-        "datasource": "Prometheus",
+        "type": "timeseries",
+        "gridPos": { "h": 8, "w": 12, "x": 6, "y": 16 },
+        "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
         "targets": [
-          { "expr": "rate(corpaction_tx_failures_total[5m])" }
-        ]
+          {
+            "expr": "rate(corpaction_tx_failures_total[5m])",
+            "legendFormat": "Failures/s",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": { "unit": "ops" }
+        }
+      },
+      {
+        "id": 7,
+        "title": "Edgar Poll Latency",
+        "type": "timeseries",
+        "gridPos": { "h": 8, "w": 12, "x": 0, "y": 24 },
+        "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+        "targets": [
+          {
+            "expr": "histogram_quantile(0.95, sum(rate(corpaction_edgar_poll_duration_seconds_bucket[5m])) by (le))",
+            "legendFormat": "p95 poll latency",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": { "unit": "s" }
+        }
+      },
+      {
+        "id": 8,
+        "title": "Gas Price (gwei)",
+        "type": "timeseries",
+        "gridPos": { "h": 8, "w": 12, "x": 12, "y": 24 },
+        "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+        "targets": [
+          {
+            "expr": "corpaction_gas_price_gwei",
+            "legendFormat": "Gas Price",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": { "unit": "none" }
+        }
       }
     ]
   }

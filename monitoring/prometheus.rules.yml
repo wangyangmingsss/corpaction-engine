@@ -1,0 +1,92 @@
+groups:
+  - name: corpaction_alerts
+    rules:
+      - alert: EdgarPollLatencyHigh
+        expr: histogram_quantile(0.95, sum(rate(corpaction_edgar_poll_duration_seconds_bucket[5m])) by (le)) > 5
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "EDGAR poll latency exceeds 5s (p95)"
+          description: "The 95th percentile EDGAR poll latency is {{ $value }}s, exceeding the 5s threshold."
+
+      - alert: NoEventsIngested
+        expr: increase(corpaction_events_ingested_total[30m]) == 0 and (hour() >= 13 and hour() <= 21)
+        for: 30m
+        labels:
+          severity: critical
+        annotations:
+          summary: "No events ingested for 30 minutes during market hours"
+          description: "Zero events have been ingested in the last 30 minutes while US markets are open."
+
+      - alert: ClassificationErrorRateHigh
+        expr: rate(corpaction_classification_errors_total[5m]) / rate(corpaction_events_classified_total[5m]) > 0.01
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Classification error rate exceeds 1%"
+          description: "The classification error rate is {{ $value | humanizePercentage }}."
+
+      - alert: ValidatorSignatureCollectionSlow
+        expr: histogram_quantile(0.95, sum(rate(corpaction_validator_signature_duration_seconds_bucket[5m])) by (le)) > 600
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Validator signature collection exceeds 10 minutes"
+          description: "Collecting validator signatures is taking {{ $value }}s (p95), exceeding the 10-minute threshold."
+
+      - alert: OnChainTxFailure
+        expr: increase(corpaction_tx_failures_total[5m]) > 0
+        for: 0m
+        labels:
+          severity: critical
+        annotations:
+          summary: "On-chain transaction failure detected"
+          description: "{{ $value }} transaction failure(s) detected in the last 5 minutes."
+
+      - alert: MerkleTreeConstructionSlow
+        expr: histogram_quantile(0.95, sum(rate(corpaction_merkle_tree_build_duration_seconds_bucket[5m])) by (le)) > 60
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Merkle tree construction exceeds 60s"
+          description: "Merkle tree build time is {{ $value }}s (p95), exceeding the 60s threshold."
+
+      - alert: GasPriceHigh
+        expr: corpaction_gas_price_gwei > 10
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Gas price exceeds 10 gwei"
+          description: "Current gas price is {{ $value }} gwei, exceeding the 10 gwei threshold."
+
+      - alert: UnclaimedDividendRatioHigh
+        expr: (corpaction_unclaimed_dividends / corpaction_total_dividends) > 0.5
+        for: 1h
+        labels:
+          severity: warning
+        annotations:
+          summary: "Unclaimed dividend ratio exceeds 50%"
+          description: "{{ $value | humanizePercentage }} of dividends remain unclaimed."
+
+      - alert: ContractBalanceLow
+        expr: corpaction_contract_balance_eth < corpaction_contract_minimum_balance_eth
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Contract balance below minimum threshold"
+          description: "Contract balance is {{ $value }} ETH, below the required minimum."
+
+      - alert: ValidatorQuorumUnhealthy
+        expr: corpaction_validators_online < corpaction_validators_required
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Validator quorum unhealthy - fewer than M validators online"
+          description: "Only {{ $value }} validators are online, below the required quorum."

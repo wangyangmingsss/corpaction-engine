@@ -22,6 +22,17 @@ export interface ClassificationResult {
   params: Record<string, unknown>;
 }
 
+// 8-K Item codes that map to specific corporate action categories
+const ITEM_8K_MAP: Record<string, { actionHint: string; signal: string }> = {
+  '1.01': { actionHint: 'MERGER_REGISTRATION', signal: 'item_1.01_material_agreement' },
+  '1.02': { actionHint: 'DELISTING', signal: 'item_1.02_termination_agreement' },
+  '2.01': { actionHint: 'MERGER_REGISTRATION', signal: 'item_2.01_acquisition_disposition' },
+  '3.03': { actionHint: 'TICKER_CHANGE', signal: 'item_3.03_material_modification_rights' },
+  '5.01': { actionHint: 'TICKER_CHANGE', signal: 'item_5.01_change_control' },
+  '5.03': { actionHint: 'FORWARD_SPLIT', signal: 'item_5.03_amendments_articles' },
+  '8.01': { actionHint: 'CORPORATE_EVENT', signal: 'item_8.01_other_events' },
+};
+
 export class EventClassifier {
   private logger: Logger;
 
@@ -36,14 +47,23 @@ export class EventClassifier {
     if (event.eventType === 'SPLIT' || this.hasSplitSignals(event)) {
       return this.classifySplit(event);
     }
-    if (event.eventType === 'MERGER_REGISTRATION' || event.eventType === 'TENDER_OFFER') {
+    if (event.eventType === 'MERGER_REGISTRATION') {
       return this.classifyMerger(event);
+    }
+    if (event.eventType === 'TENDER_OFFER') {
+      return this.classifyTenderOffer(event);
+    }
+    if (event.eventType === 'LIQUIDATION' || this.hasLiquidationSignals(event)) {
+      return this.classifyLiquidation(event);
     }
     if (event.eventType === 'DELISTING') {
       return this.classifyDelisting(event);
     }
     if (event.eventType === 'PROXY_VOTE') {
       return this.classifyProxyVote(event);
+    }
+    if (event.eventType === 'CORPORATE_EVENT') {
+      return this.classifyCorporateEvent(event);
     }
 
     this.logger.warn('Unable to classify event', { ticker: event.ticker, eventType: event.eventType });
@@ -97,7 +117,68 @@ export class EventClassifier {
     };
   }
 
+  /**
+   * SC TO-T tender offer handling.
+   * Tender offers filed via SC TO-T are always treated as MERGER_CASH
+   * unless an exchange ratio is present (hostile stock-for-stock acquisition).
+   */
+  private classifyTenderOffer(event: RawCorporateActionEvent): ClassificationResult {
+    const rawData = event.rawData;
+    const hasExchangeRatio = !!rawData.exchange_ratio;
+    const offerPrice = rawData.offer_price || rawData.cash_per_share;
+
+    let actionType: ActionType = 'MERGER_CASH';
+    const signals = ['sc_to_t_filing', 'tender_offer'];
+
+    if (hasExchangeRatio && offerPrice) {
+      actionType = 'MERGER_HYBRID';
+      signals.push('exchange_ratio', 'cash_component');
+    } else if (hasExchangeRatio) {
+      actionType = 'MERGER_STOCK';
+      signals.push('exchange_ratio');
+    } else {
+      signals.push('cash_tender');
+    }
+
+    return {
+      actionType,
+      confidence: offerPrice ? 'HIGH' : 'MEDIUM',
+      signals,
+      params: {
+        ...rawData,
+        offerPrice,
+        isTenderOffer: true,
+      },
+    };
+  }
+
+  /**
+   * LIQUIDATION classification - distinct from DELISTING.
+   * A liquidation distributes remaining assets to shareholders.
+   * A delisting simply removes the security from an exchange.
+   */
+  private classifyLiquidation(event: RawCorporateActionEvent): ClassificationResult {
+    const rawData = event.rawData;
+    const distributionAmount = rawData.distribution_amount || rawData.liquidation_value;
+
+    return {
+      actionType: 'LIQUIDATION',
+      confidence: distributionAmount ? 'HIGH' : 'MEDIUM',
+      signals: ['liquidation_filing', distributionAmount ? 'distribution_amount_present' : 'distribution_amount_missing'],
+      params: {
+        distributionAmount,
+        effectiveDate: rawData.effective_date,
+        isVoluntary: rawData.is_voluntary ?? false,
+      },
+    };
+  }
+
   private classifyDelisting(event: RawCorporateActionEvent): ClassificationResult {
+    // Check if this is actually a liquidation masquerading as a delisting
+    if (this.hasLiquidationSignals(event)) {
+      return this.classifyLiquidation(event);
+    }
+
     return {
       actionType: 'DELISTING',
       confidence: 'HIGH',
@@ -118,12 +199,102 @@ export class EventClassifier {
       };
     }
 
+    if (rawText.includes('liquidat') || rawText.includes('wind down') || rawText.includes('dissolution')) {
+      return this.classifyLiquidation(event);
+    }
+
     return {
       actionType: 'MERGER_STOCK',
       confidence: 'LOW',
       signals: ['proxy_vote', 'merger_vote'],
       params: event.rawData,
     };
+  }
+
+  /**
+   * 8-K item-level parsing for CORPORATE_EVENT.
+   * Examines raw data for specific 8-K item codes to refine classification.
+   */
+  private classifyCorporateEvent(event: RawCorporateActionEvent): ClassificationResult | null {
+    const rawData = event.rawData;
+    const rawText = JSON.stringify(rawData).toLowerCase();
+
+    // Try to detect 8-K item codes from raw data
+    const detectedItems = this.detect8KItems(rawData, rawText);
+
+    if (detectedItems.length > 0) {
+      // Use the most specific item to drive classification
+      const primaryItem = detectedItems[0];
+      const itemInfo = ITEM_8K_MAP[primaryItem];
+
+      if (itemInfo) {
+        // Item 1.01 - Entry into a material definitive agreement (merger/acquisition)
+        if (primaryItem === '1.01') {
+          return this.classifyMerger(event);
+        }
+
+        // Item 5.03 - Amendments to articles of incorporation (often stock splits)
+        if (primaryItem === '5.03') {
+          if (this.hasSplitSignals(event)) {
+            return this.classifySplit(event);
+          }
+          return {
+            actionType: 'TICKER_CHANGE',
+            confidence: 'LOW',
+            signals: [itemInfo.signal, ...detectedItems.map(i => `item_${i}`)],
+            params: { ...rawData, detectedItems },
+          };
+        }
+
+        // Item 8.01 - Other events: needs keyword analysis
+        if (primaryItem === '8.01') {
+          if (this.hasDividendSignals(event)) return this.classifyDividend(event);
+          if (this.hasSplitSignals(event)) return this.classifySplit(event);
+          if (this.hasLiquidationSignals(event)) return this.classifyLiquidation(event);
+        }
+      }
+    }
+
+    // Fallback: try keyword-based classification
+    if (this.hasDividendSignals(event)) return this.classifyDividend(event);
+    if (this.hasSplitSignals(event)) return this.classifySplit(event);
+    if (this.hasLiquidationSignals(event)) return this.classifyLiquidation(event);
+
+    this.logger.warn('CORPORATE_EVENT could not be refined', {
+      ticker: event.ticker,
+      detectedItems,
+    });
+    return null;
+  }
+
+  private detect8KItems(rawData: Record<string, unknown>, rawText: string): string[] {
+    const items: string[] = [];
+
+    // Check if items are explicitly provided in raw data
+    if (Array.isArray(rawData.items)) {
+      for (const item of rawData.items) {
+        if (typeof item === 'string' && ITEM_8K_MAP[item]) {
+          items.push(item);
+        }
+      }
+    }
+
+    // Fallback: scan text for item references
+    for (const itemCode of Object.keys(ITEM_8K_MAP)) {
+      const patterns = [
+        `item ${itemCode}`,
+        `item${itemCode.replace('.', '')}`,
+        `"${itemCode}"`,
+      ];
+      for (const pattern of patterns) {
+        if (rawText.includes(pattern)) {
+          if (!items.includes(itemCode)) items.push(itemCode);
+          break;
+        }
+      }
+    }
+
+    return items;
   }
 
   private hasDividendSignals(event: RawCorporateActionEvent): boolean {
@@ -134,5 +305,10 @@ export class EventClassifier {
   private hasSplitSignals(event: RawCorporateActionEvent): boolean {
     const raw = JSON.stringify(event.rawData).toLowerCase();
     return raw.includes('split') || raw.includes('stock split');
+  }
+
+  private hasLiquidationSignals(event: RawCorporateActionEvent): boolean {
+    const raw = JSON.stringify(event.rawData).toLowerCase();
+    return raw.includes('liquidat') || raw.includes('dissolution') || raw.includes('wind down') || raw.includes('winding up');
   }
 }

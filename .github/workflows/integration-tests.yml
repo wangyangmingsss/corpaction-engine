@@ -1,0 +1,83 @@
+name: Integration Tests
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  integration:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: corpaction_test
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+      redis:
+        image: redis:7
+        ports: ['6379:6379']
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+
+      - name: Build Contracts
+        run: cd packages/contracts && forge build
+
+      - name: Run Contract Tests
+        run: cd packages/contracts && forge test -vvv
+
+      - name: Build SDK
+        run: cd packages/sdk && npm ci && npm run build
+
+      - name: Test SDK
+        run: cd packages/sdk && npm test
+
+      - name: Init Database
+        run: PGPASSWORD=postgres psql -h localhost -U postgres -d corpaction_test -f packages/services/db/init.sql
+
+      - name: Build Services
+        run: |
+          cd packages/services/ingestion && npm ci && npm run build && cd ../../..
+          cd packages/services/processor && npm ci && npm run build && cd ../../..
+          cd packages/services/validator && npm ci && npm run build && cd ../../..
+
+      - name: Test Services
+        env:
+          DATABASE_URL: postgres://postgres:postgres@localhost:5432/corpaction_test
+          REDIS_URL: redis://localhost:6379
+        run: |
+          cd packages/services/ingestion && npm test && cd ../../..
+          cd packages/services/processor && npm test && cd ../../..
+          cd packages/services/validator && npm test && cd ../../..
+
+      - name: Start Anvil
+        run: anvil --fork-url ${{ secrets.RPC_URL || 'http://localhost:8545' }} &
+
+      - name: Run Integration Smoke Test
+        env:
+          DATABASE_URL: postgres://postgres:postgres@localhost:5432/corpaction_test
+          REDIS_URL: redis://localhost:6379
+          RPC_URL: http://localhost:8545
+        run: echo "Integration smoke test placeholder - add end-to-end tests here"

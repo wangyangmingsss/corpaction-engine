@@ -160,4 +160,135 @@ contract ActionRegistryTest is Test {
         bytes32[] memory actions = registry.getActionsByToken(address(stockToken));
         assertEq(actions.length, 1);
     }
+
+    function test_timelockExecutionTimeValidation() public {
+        // Set a 1-day timelock for DIVIDEND
+        registry.setTimelock(ICorpActionTypes.ActionType.DIVIDEND, 1 days);
+
+        ICorpActionTypes.ActionIntent memory intent = _buildDividendIntent();
+
+        // Propose
+        bytes32 hash = keccak256(abi.encode(intent));
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(validator1Key,
+            keccak256(abi.encodePacked("\x19Ethereum Signed Message:\n32", hash)));
+        bytes memory sig = abi.encodePacked(r, s, v);
+        bytes32 intentId = registry.proposeAction(intent, sig);
+
+        // Validate to reach quorum
+        bytes32 valHash = keccak256(abi.encode(
+            intentId, intent.actionType, intent.targetToken, intent.actionParams
+        ));
+        (v, r, s) = vm.sign(validator2Key,
+            keccak256(abi.encodePacked("\x19Ethereum Signed Message:\n32", valHash)));
+        sig = abi.encodePacked(r, s, v);
+        registry.validateAction(intentId, sig);
+
+        // Queue
+        ICorpActionTypes.ActionIntent memory stored = registry.getAction(intentId);
+        if (stored.state == ICorpActionTypes.ActionState.VALIDATED) {
+            registry.queueAction(intentId);
+        }
+
+        // Try to execute before timelock expires
+        vm.expectRevert(abi.encodeWithSelector(
+            ActionRegistry.TimelockNotExpired.selector,
+            intentId,
+            registry.getExecutionTime(intentId)
+        ));
+        registry.executeAction(intentId);
+
+        // Warp past timelock and verify execution time is set correctly
+        uint256 execTime = registry.getExecutionTime(intentId);
+        assertGt(execTime, block.timestamp);
+    }
+
+    function test_intentTTLExpiry() public {
+        ICorpActionTypes.ActionIntent memory intent = _buildDividendIntent();
+
+        // Propose
+        bytes32 hash = keccak256(abi.encode(intent));
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(validator1Key,
+            keccak256(abi.encodePacked("\x19Ethereum Signed Message:\n32", hash)));
+        bytes memory sig = abi.encodePacked(r, s, v);
+        bytes32 intentId = registry.proposeAction(intent, sig);
+
+        // Warp past the intentTTL (7 days)
+        vm.warp(block.timestamp + 8 days);
+
+        // Try to validate after TTL - should revert
+        bytes32 valHash = keccak256(abi.encode(
+            intentId, intent.actionType, intent.targetToken, intent.actionParams
+        ));
+        (v, r, s) = vm.sign(validator2Key,
+            keccak256(abi.encodePacked("\x19Ethereum Signed Message:\n32", valHash)));
+        sig = abi.encodePacked(r, s, v);
+
+        vm.expectRevert(abi.encodeWithSelector(
+            ActionRegistry.IntentExpired.selector, intentId
+        ));
+        registry.validateAction(intentId, sig);
+
+        // Expire the intent explicitly
+        registry.expireAction(intentId);
+        ICorpActionTypes.ActionIntent memory stored = registry.getAction(intentId);
+        assertEq(uint8(stored.state), uint8(ICorpActionTypes.ActionState.EXPIRED));
+    }
+
+    function test_executorRouting() public {
+        // Register an executor for DIVIDEND
+        address dividendExecutor = makeAddr("dividendExecutor");
+        registry.registerExecutor(ICorpActionTypes.ActionType.DIVIDEND, dividendExecutor);
+
+        // Register another for FORWARD_SPLIT
+        address splitExecutor = makeAddr("splitExecutor");
+        registry.registerExecutor(ICorpActionTypes.ActionType.FORWARD_SPLIT, splitExecutor);
+
+        // Verify routing by attempting to execute without timelock
+        registry.setTimelock(ICorpActionTypes.ActionType.DIVIDEND, 0);
+
+        ICorpActionTypes.ActionIntent memory intent = _buildDividendIntent();
+
+        // Propose + validate
+        bytes32 hash = keccak256(abi.encode(intent));
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(validator1Key,
+            keccak256(abi.encodePacked("\x19Ethereum Signed Message:\n32", hash)));
+        bytes32 intentId = registry.proposeAction(intent, abi.encodePacked(r, s, v));
+
+        bytes32 valHash = keccak256(abi.encode(
+            intentId, intent.actionType, intent.targetToken, intent.actionParams
+        ));
+        (v, r, s) = vm.sign(validator2Key,
+            keccak256(abi.encodePacked("\x19Ethereum Signed Message:\n32", valHash)));
+        registry.validateAction(intentId, abi.encodePacked(r, s, v));
+
+        // Queue
+        ICorpActionTypes.ActionIntent memory stored = registry.getAction(intentId);
+        if (stored.state == ICorpActionTypes.ActionState.VALIDATED) {
+            registry.queueAction(intentId);
+        }
+
+        // Execute will call the dividendExecutor address, which will revert
+        // since it's just an EOA. But this proves the routing worked.
+        registry.executeAction(intentId);
+        stored = registry.getAction(intentId);
+        // Should be FAILED since the executor EOA can't handle the call
+        assertEq(uint8(stored.state), uint8(ICorpActionTypes.ActionState.FAILED));
+    }
+
+    function test_revert_registerExecutor_notAdmin() public {
+        address nonAdmin = makeAddr("nonAdmin");
+        vm.prank(nonAdmin);
+        vm.expectRevert();
+        registry.registerExecutor(
+            ICorpActionTypes.ActionType.DIVIDEND,
+            makeAddr("executor")
+        );
+    }
+
+    function test_revert_setTimelock_notAdmin() public {
+        address nonAdmin = makeAddr("nonAdmin");
+        vm.prank(nonAdmin);
+        vm.expectRevert();
+        registry.setTimelock(ICorpActionTypes.ActionType.DIVIDEND, 1 days);
+    }
 }

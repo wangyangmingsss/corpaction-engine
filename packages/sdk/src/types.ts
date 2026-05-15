@@ -49,16 +49,85 @@ export interface ActionEvent {
   timestamp: number;
 }
 
+export interface PendingActionFilter {
+  token?: string;
+  actionType?: ActionType;
+  state?: ActionState;
+}
+
+// ========== ACTION PARAM TYPES ==========
+
+export interface DividendParams {
+  paymentToken: string;
+  amountPerShare: bigint;
+  totalAmount: bigint;
+  merkleRoot: string;
+  snapshotBlock: bigint;
+}
+
+export interface SplitParams {
+  numerator: bigint;
+  denominator: bigint;
+  adjustDerivatives: boolean;
+}
+
+export interface MergerParams {
+  acquirerToken: string;
+  cashPerShare: bigint;
+  stockRatio: bigint;
+  totalConsideration: bigint;
+}
+
+export interface DelistingParams {
+  reason: string;
+  finalPrice: bigint;
+  buybackDeadline: bigint;
+  custodianAddress: string;
+}
+
+export interface SpinoffParams {
+  newToken: string;
+  distributionRatio: bigint;
+  merkleRoot: string;
+  snapshotBlock: bigint;
+}
+
+export interface TickerChangeParams {
+  oldTicker: string;
+  newTicker: string;
+  newTokenAddress: string;
+  migrationDeadline: bigint;
+}
+
+export type DecodedActionParams =
+  | DividendParams
+  | SplitParams
+  | MergerParams
+  | DelistingParams
+  | SpinoffParams
+  | TickerChangeParams;
+
+// ========== ERROR TYPES ==========
+
+export enum CorpActionErrorType {
+  RPC_ERROR = 'RPC_ERROR',
+  CONTRACT_ERROR = 'CONTRACT_ERROR',
+  INVALID_PARAMS = 'INVALID_PARAMS',
+  NOT_CONFIGURED = 'NOT_CONFIGURED',
+  TIMEOUT = 'TIMEOUT',
+  UNKNOWN = 'UNKNOWN',
+}
+
 export interface CorpActionClientConfig {
   rpcUrl: string;
   registryAddress: string;
   chainId: number;
   dividendDistributorAddress?: string;
   splitExecutorAddress?: string;
-}
-
-export interface PendingActionFilter {
-  token?: string;
-  actionType?: ActionType;
-  state?: ActionState;
+  mergerHandlerAddress?: string;
+  delistingManagerAddress?: string;
+  spinoffExecutorAddress?: string;
+  tickerMigratorAddress?: string;
+  maxRetries?: number;
+  retryBaseDelayMs?: number;
 }

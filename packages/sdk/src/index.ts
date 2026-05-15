@@ -1,4 +1,4 @@
-export { CorpActionClient } from './CorpActionClient';
+export { CorpActionClient, CorpActionError, RPCError, ContractError } from './CorpActionClient';
 export {
   ActionType,
   ActionState,
@@ -6,4 +6,12 @@ export {
   ActionEvent,
   CorpActionClientConfig,
   PendingActionFilter,
+  CorpActionErrorType,
+  DecodedActionParams,
+  DividendParams,
+  SplitParams,
+  MergerParams,
+  DelistingParams,
+  SpinoffParams,
+  TickerChangeParams,
 } from './types';

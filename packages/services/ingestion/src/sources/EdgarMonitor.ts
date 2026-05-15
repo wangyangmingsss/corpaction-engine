@@ -22,9 +22,15 @@ export class EdgarMonitor implements ICorporateActionSource {
   private readonly POLL_INTERVAL_MARKET = 60_000;
   private readonly POLL_INTERVAL_OFF = 300_000;
 
+  private readonly RSS_FEED_URL =
+    'https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&type=8-K&dateb=&owner=include&count=40&search_text=&action=getcompany&output=atom';
+  private readonly MAX_CONSECUTIVE_FAILURES = 3;
+
   private redis: Redis;
   private logger: Logger;
   private isRunning = false;
+  private consecutiveFailures = 0;
+  private useRssFallback = false;
 
   constructor(redis: Redis, logger: Logger) {
     this.redis = redis;
@@ -44,9 +50,27 @@ export class EdgarMonitor implements ICorporateActionSource {
   async poll(): Promise<RawCorporateActionEvent[]> {
     const events: RawCorporateActionEvent[] = [];
 
+    // If RSS fallback is active, use the RSS feed instead of the API
+    if (this.useRssFallback) {
+      this.logger.warn('Using RSS fallback for EDGAR polling');
+      try {
+        const rssEvents = await this.pollRssFeed();
+        // On RSS success, attempt to recover API on next cycle
+        this.consecutiveFailures = 0;
+        return rssEvents;
+      } catch (rssError) {
+        this.logger.error('RSS fallback also failed', { error: String(rssError) });
+        return [];
+      }
+    }
+
     for (const form of this.RELEVANT_FORMS) {
       try {
         const filings = await this.fetchRecentFilings(form);
+        // Reset failure counter on any successful fetch
+        this.consecutiveFailures = 0;
+        this.useRssFallback = false;
+
         for (const filing of filings) {
           const processed = await this.redis.sismember(
             'edgar:processed', filing.accessionNumber
@@ -60,7 +84,25 @@ export class EdgarMonitor implements ICorporateActionSource {
           }
         }
       } catch (error) {
-        this.logger.error(`Error fetching ${form} filings`, { error: String(error) });
+        this.consecutiveFailures++;
+        this.logger.error(`Error fetching ${form} filings (failure ${this.consecutiveFailures}/${this.MAX_CONSECUTIVE_FAILURES})`, {
+          error: String(error),
+        });
+
+        if (this.consecutiveFailures >= this.MAX_CONSECUTIVE_FAILURES) {
+          this.useRssFallback = true;
+          this.logger.warn('Switching to RSS fallback after consecutive API failures', {
+            consecutiveFailures: this.consecutiveFailures,
+          });
+          // Immediately try RSS for this poll cycle
+          try {
+            const rssEvents = await this.pollRssFeed();
+            events.push(...rssEvents);
+          } catch (rssError) {
+            this.logger.error('RSS fallback failed on first attempt', { error: String(rssError) });
+          }
+          break;
+        }
       }
     }
     return events;
@@ -161,6 +203,87 @@ export class EdgarMonitor implements ICorporateActionSource {
       '25-NSE': 'DELISTING',
     };
     return mapping[form];
+  }
+
+  private async pollRssFeed(): Promise<RawCorporateActionEvent[]> {
+    const events: RawCorporateActionEvent[] = [];
+
+    const response = await fetch(this.RSS_FEED_URL, {
+      headers: {
+        'User-Agent': process.env.EDGAR_USER_AGENT || 'CorpActionEngine/1.0',
+        'Accept': 'application/atom+xml',
+      },
+    });
+
+    if (!response.ok) {
+      throw new Error(`EDGAR RSS feed error: ${response.status}`);
+    }
+
+    const text = await response.text();
+
+    // Simple Atom XML parsing for <entry> elements
+    const entryRegex = /<entry>([\s\S]*?)<\/entry>/g;
+    let match: RegExpExecArray | null;
+
+    while ((match = entryRegex.exec(text)) !== null) {
+      const entry = match[1];
+      const title = this.extractXmlTag(entry, 'title');
+      const link = this.extractXmlAttr(entry, 'link', 'href');
+      const updated = this.extractXmlTag(entry, 'updated');
+      const summary = this.extractXmlTag(entry, 'summary');
+
+      // Extract accession number from the link URL
+      const accessionMatch = link?.match(/(\d{10}-\d{2}-\d{6})/);
+      const accessionNumber = accessionMatch ? accessionMatch[1] : '';
+
+      if (!accessionNumber) continue;
+
+      const processed = await this.redis.sismember('edgar:processed', accessionNumber);
+      if (processed) continue;
+
+      // Try to extract ticker from the title
+      const tickerMatch = title?.match(/\(([A-Z]{1,5})\)/);
+      const ticker = tickerMatch ? tickerMatch[1] : '';
+
+      const contentHash = crypto.createHash('sha256')
+        .update(`${accessionNumber}:${updated}`)
+        .digest('hex');
+
+      events.push({
+        sourceType: this.name,
+        sourceId: `EDGAR:${accessionNumber}`,
+        sourceUrl: link || undefined,
+        contentHash,
+        ticker,
+        companyName: title || '',
+        eventType: 'CORPORATE_EVENT',
+        rawData: {
+          accessionNumber,
+          title,
+          summary,
+          updated,
+          rssSource: true,
+        },
+        detectedAt: new Date(),
+      });
+
+      await this.redis.sadd('edgar:processed', accessionNumber);
+    }
+
+    this.logger.info(`Ingested ${events.length} events from EDGAR RSS feed`);
+    return events;
+  }
+
+  private extractXmlTag(xml: string, tag: string): string | null {
+    const regex = new RegExp(`<${tag}[^>]*>([\\s\\S]*?)</${tag}>`);
+    const match = regex.exec(xml);
+    return match ? match[1].trim() : null;
+  }
+
+  private extractXmlAttr(xml: string, tag: string, attr: string): string | null {
+    const regex = new RegExp(`<${tag}[^>]*${attr}="([^"]*)"[^>]*/?>`, 'i');
+    const match = regex.exec(xml);
+    return match ? match[1] : null;
   }
 
   private async fetchFiling(accession: string): Promise<EdgarFiling | null> {

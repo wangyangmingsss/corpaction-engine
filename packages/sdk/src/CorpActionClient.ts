@@ -6,6 +6,14 @@ import {
   ActionEvent,
   CorpActionClientConfig,
   PendingActionFilter,
+  CorpActionErrorType,
+  DecodedActionParams,
+  DividendParams,
+  SplitParams,
+  MergerParams,
+  DelistingParams,
+  SpinoffParams,
+  TickerChangeParams,
 } from './types';
 
 const REGISTRY_ABI = [
@@ -31,6 +39,55 @@ const ATTESTATION_ABI = [
   'function getAttestation(bytes32 attestationId) external view returns (tuple(bytes32 intentId, string sourceType, string sourceId, string sourceUrl, bytes32 contentHash, uint256 ingestedAt, uint256 blockNumber, address attester, bytes signature, bool verified))',
   'function getAttestationsForIntent(bytes32 intentId) external view returns (bytes32[])',
 ];
+
+const SPLIT_EXECUTOR_ABI = [
+  'function getAdjustmentFactor(bytes32 intentId) external view returns (uint256 numerator, uint256 denominator)',
+  'event SplitExecuted(bytes32 indexed intentId, address indexed token, uint256 numerator, uint256 denominator)',
+];
+
+const MERGER_HANDLER_ABI = [
+  'event MergerExecuted(bytes32 indexed intentId, address indexed targetToken, address indexed acquirerToken)',
+];
+
+const DELISTING_MANAGER_ABI = [
+  'event DelistingInitiated(bytes32 indexed intentId, address indexed token, uint256 finalPrice)',
+];
+
+const SPINOFF_EXECUTOR_ABI = [
+  'event SpinoffDistributed(bytes32 indexed intentId, address indexed parentToken, address indexed newToken)',
+];
+
+const TICKER_MIGRATOR_ABI = [
+  'event TickerMigrated(bytes32 indexed intentId, string oldTicker, string newTicker)',
+];
+
+// ========== CUSTOM ERROR TYPES ==========
+
+export class CorpActionError extends Error {
+  public readonly errorType: CorpActionErrorType;
+  public readonly details?: Record<string, unknown>;
+
+  constructor(errorType: CorpActionErrorType, message: string, details?: Record<string, unknown>) {
+    super(message);
+    this.name = 'CorpActionError';
+    this.errorType = errorType;
+    this.details = details;
+  }
+}
+
+export class RPCError extends CorpActionError {
+  constructor(message: string, details?: Record<string, unknown>) {
+    super(CorpActionErrorType.RPC_ERROR, message, details);
+    this.name = 'RPCError';
+  }
+}
+
+export class ContractError extends CorpActionError {
+  constructor(message: string, details?: Record<string, unknown>) {
+    super(CorpActionErrorType.CONTRACT_ERROR, message, details);
+    this.name = 'ContractError';
+  }
+}
 
 export class CorpActionClient {
   private provider: ethers.JsonRpcProvider;
@@ -174,7 +231,315 @@ export class CorpActionClient {
     return () => this.registry.off('ActionProposed', handler);
   }
 
+  onActionValidated(
+    callback: (event: { intentId: string; validator: string; count: number; required: number }) => void
+  ): () => void {
+    const handler = (intentId: string, validator: string, count: bigint, required: bigint) => {
+      callback({ intentId, validator, count: Number(count), required: Number(required) });
+    };
+    this.registry.on('ActionValidated', handler);
+    return () => this.registry.off('ActionValidated', handler);
+  }
+
+  onActionQueued(
+    callback: (event: { intentId: string; executionTime: number }) => void
+  ): () => void {
+    const handler = (intentId: string, executionTime: bigint) => {
+      callback({ intentId, executionTime: Number(executionTime) });
+    };
+    this.registry.on('ActionQueued', handler);
+    return () => this.registry.off('ActionQueued', handler);
+  }
+
+  onActionCancelled(
+    callback: (event: { intentId: string; reason: string }) => void
+  ): () => void {
+    const handler = (intentId: string, reason: string) => {
+      callback({ intentId, reason });
+    };
+    this.registry.on('ActionCancelled', handler);
+    return () => this.registry.off('ActionCancelled', handler);
+  }
+
+  onActionFailed(
+    callback: (event: { intentId: string; reason: string }) => void
+  ): () => void {
+    const handler = (intentId: string, reason: string) => {
+      callback({ intentId, reason });
+    };
+    this.registry.on('ActionFailed', handler);
+    return () => this.registry.off('ActionFailed', handler);
+  }
+
+  onDividendClaimed(
+    callback: (event: { intentId: string; claimer: string; amount: bigint }) => void
+  ): () => void {
+    if (!this.config.dividendDistributorAddress) {
+      throw new CorpActionError(CorpActionErrorType.NOT_CONFIGURED, 'DividendDistributor address not configured');
+    }
+    const distributor = new ethers.Contract(
+      this.config.dividendDistributorAddress,
+      DIVIDEND_ABI,
+      this.provider
+    );
+    const handler = (intentId: string, claimer: string, amount: bigint) => {
+      callback({ intentId, claimer, amount });
+    };
+    distributor.on('DividendClaimed', handler);
+    return () => distributor.off('DividendClaimed', handler);
+  }
+
+  onSplitExecuted(
+    callback: (event: { intentId: string; token: string; numerator: bigint; denominator: bigint }) => void
+  ): () => void {
+    if (!this.config.splitExecutorAddress) {
+      throw new CorpActionError(CorpActionErrorType.NOT_CONFIGURED, 'SplitExecutor address not configured');
+    }
+    const executor = new ethers.Contract(
+      this.config.splitExecutorAddress,
+      SPLIT_EXECUTOR_ABI,
+      this.provider
+    );
+    const handler = (intentId: string, token: string, numerator: bigint, denominator: bigint) => {
+      callback({ intentId, token, numerator, denominator });
+    };
+    executor.on('SplitExecuted', handler);
+    return () => executor.off('SplitExecuted', handler);
+  }
+
+  onMergerExecuted(
+    callback: (event: { intentId: string; targetToken: string; acquirerToken: string }) => void
+  ): () => void {
+    if (!this.config.mergerHandlerAddress) {
+      throw new CorpActionError(CorpActionErrorType.NOT_CONFIGURED, 'MergerHandler address not configured');
+    }
+    const handler_contract = new ethers.Contract(
+      this.config.mergerHandlerAddress,
+      MERGER_HANDLER_ABI,
+      this.provider
+    );
+    const handler = (intentId: string, targetToken: string, acquirerToken: string) => {
+      callback({ intentId, targetToken, acquirerToken });
+    };
+    handler_contract.on('MergerExecuted', handler);
+    return () => handler_contract.off('MergerExecuted', handler);
+  }
+
+  onDelistingInitiated(
+    callback: (event: { intentId: string; token: string; finalPrice: bigint }) => void
+  ): () => void {
+    if (!this.config.delistingManagerAddress) {
+      throw new CorpActionError(CorpActionErrorType.NOT_CONFIGURED, 'DelistingManager address not configured');
+    }
+    const manager = new ethers.Contract(
+      this.config.delistingManagerAddress,
+      DELISTING_MANAGER_ABI,
+      this.provider
+    );
+    const handler = (intentId: string, token: string, finalPrice: bigint) => {
+      callback({ intentId, token, finalPrice });
+    };
+    manager.on('DelistingInitiated', handler);
+    return () => manager.off('DelistingInitiated', handler);
+  }
+
+  onSpinoffDistributed(
+    callback: (event: { intentId: string; parentToken: string; newToken: string }) => void
+  ): () => void {
+    if (!this.config.spinoffExecutorAddress) {
+      throw new CorpActionError(CorpActionErrorType.NOT_CONFIGURED, 'SpinoffExecutor address not configured');
+    }
+    const executor = new ethers.Contract(
+      this.config.spinoffExecutorAddress,
+      SPINOFF_EXECUTOR_ABI,
+      this.provider
+    );
+    const handler = (intentId: string, parentToken: string, newToken: string) => {
+      callback({ intentId, parentToken, newToken });
+    };
+    executor.on('SpinoffDistributed', handler);
+    return () => executor.off('SpinoffDistributed', handler);
+  }
+
+  onTickerMigrated(
+    callback: (event: { intentId: string; oldTicker: string; newTicker: string }) => void
+  ): () => void {
+    if (!this.config.tickerMigratorAddress) {
+      throw new CorpActionError(CorpActionErrorType.NOT_CONFIGURED, 'TickerMigrator address not configured');
+    }
+    const migrator = new ethers.Contract(
+      this.config.tickerMigratorAddress,
+      TICKER_MIGRATOR_ABI,
+      this.provider
+    );
+    const handler = (intentId: string, oldTicker: string, newTicker: string) => {
+      callback({ intentId, oldTicker, newTicker });
+    };
+    migrator.on('TickerMigrated', handler);
+    return () => migrator.off('TickerMigrated', handler);
+  }
+
+  // ========== PARAMETER DECODING ==========
+
+  decodeActionParams(actionType: ActionType, rawParams: string): DecodedActionParams {
+    const abiCoder = ethers.AbiCoder.defaultAbiCoder();
+
+    switch (actionType) {
+      case ActionType.DIVIDEND: {
+        const decoded = abiCoder.decode(
+          ['address', 'uint256', 'uint256', 'bytes32', 'uint256'],
+          rawParams
+        );
+        return {
+          paymentToken: decoded[0],
+          amountPerShare: BigInt(decoded[1]),
+          totalAmount: BigInt(decoded[2]),
+          merkleRoot: decoded[3],
+          snapshotBlock: BigInt(decoded[4]),
+        } as DividendParams;
+      }
+      case ActionType.FORWARD_SPLIT:
+      case ActionType.REVERSE_SPLIT: {
+        const decoded = abiCoder.decode(['uint256', 'uint256', 'bool'], rawParams);
+        return {
+          numerator: BigInt(decoded[0]),
+          denominator: BigInt(decoded[1]),
+          adjustDerivatives: decoded[2],
+        } as SplitParams;
+      }
+      case ActionType.MERGER_CASH:
+      case ActionType.MERGER_STOCK:
+      case ActionType.MERGER_HYBRID: {
+        const decoded = abiCoder.decode(
+          ['address', 'uint256', 'uint256', 'uint256'],
+          rawParams
+        );
+        return {
+          acquirerToken: decoded[0],
+          cashPerShare: BigInt(decoded[1]),
+          stockRatio: BigInt(decoded[2]),
+          totalConsideration: BigInt(decoded[3]),
+        } as MergerParams;
+      }
+      case ActionType.DELISTING: {
+        const decoded = abiCoder.decode(
+          ['string', 'uint256', 'uint256', 'address'],
+          rawParams
+        );
+        return {
+          reason: decoded[0],
+          finalPrice: BigInt(decoded[1]),
+          buybackDeadline: BigInt(decoded[2]),
+          custodianAddress: decoded[3],
+        } as DelistingParams;
+      }
+      case ActionType.SPINOFF: {
+        const decoded = abiCoder.decode(
+          ['address', 'uint256', 'bytes32', 'uint256'],
+          rawParams
+        );
+        return {
+          newToken: decoded[0],
+          distributionRatio: BigInt(decoded[1]),
+          merkleRoot: decoded[2],
+          snapshotBlock: BigInt(decoded[3]),
+        } as SpinoffParams;
+      }
+      case ActionType.TICKER_CHANGE: {
+        const decoded = abiCoder.decode(
+          ['string', 'string', 'address', 'uint256'],
+          rawParams
+        );
+        return {
+          oldTicker: decoded[0],
+          newTicker: decoded[1],
+          newTokenAddress: decoded[2],
+          migrationDeadline: BigInt(decoded[3]),
+        } as TickerChangeParams;
+      }
+      default:
+        throw new CorpActionError(
+          CorpActionErrorType.INVALID_PARAMS,
+          `Unknown action type: ${actionType}`
+        );
+    }
+  }
+
+  // ========== INTEGRATION HELPERS ==========
+
+  async claimOnBehalf(
+    intentId: string,
+    holder: string,
+    amount: bigint,
+    merkleProof: string[],
+    signer: ethers.Signer
+  ): Promise<ethers.TransactionReceipt> {
+    if (!this.config.dividendDistributorAddress) {
+      throw new CorpActionError(CorpActionErrorType.NOT_CONFIGURED, 'DividendDistributor address not configured');
+    }
+
+    const distributor = new ethers.Contract(
+      this.config.dividendDistributorAddress,
+      [
+        ...DIVIDEND_ABI,
+        'function claimOnBehalf(bytes32 intentId, address holder, uint256 amount, bytes32[] calldata merkleProof) external',
+      ],
+      signer
+    );
+
+    return this._callWithRetry(async () => {
+      const tx = await distributor.claimOnBehalf(intentId, holder, amount, merkleProof);
+      return await tx.wait();
+    });
+  }
+
+  async getStrikePriceAdjustment(
+    intentId: string
+  ): Promise<{ numerator: bigint; denominator: bigint; adjustedFactor: number }> {
+    if (!this.config.splitExecutorAddress) {
+      throw new CorpActionError(CorpActionErrorType.NOT_CONFIGURED, 'SplitExecutor address not configured');
+    }
+
+    const executor = new ethers.Contract(
+      this.config.splitExecutorAddress,
+      SPLIT_EXECUTOR_ABI,
+      this.provider
+    );
+
+    return this._callWithRetry(async () => {
+      const [numerator, denominator] = await executor.getAdjustmentFactor(intentId);
+      return {
+        numerator: BigInt(numerator),
+        denominator: BigInt(denominator),
+        adjustedFactor: Number(numerator) / Number(denominator),
+      };
+    });
+  }
+
   // ========== INTERNAL ==========
+
+  private async _callWithRetry<T>(fn: () => Promise<T>): Promise<T> {
+    const maxRetries = this.config.maxRetries ?? 3;
+    const baseDelay = this.config.retryBaseDelayMs ?? 1000;
+
+    let lastError: unknown;
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      try {
+        return await fn();
+      } catch (error: unknown) {
+        lastError = error;
+        if (attempt < maxRetries) {
+          const delay = baseDelay * Math.pow(2, attempt);
+          await new Promise((resolve) => setTimeout(resolve, delay));
+        }
+      }
+    }
+
+    const message = lastError instanceof Error ? lastError.message : String(lastError);
+    throw new RPCError(`RPC call failed after ${maxRetries + 1} attempts: ${message}`, {
+      attempts: maxRetries + 1,
+    });
+  }
 
   private parseActionIntent(result: ethers.Result): ActionIntent {
     return {

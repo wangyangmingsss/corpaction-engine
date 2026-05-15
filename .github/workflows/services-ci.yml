@@ -14,6 +14,8 @@ jobs:
         with: { node-version: '20' }
       - name: Install & Build
         run: cd packages/services/ingestion && npm ci && npm run build
+      - name: Test
+        run: cd packages/services/ingestion && npm test
 
   build-processor:
     runs-on: ubuntu-latest
@@ -23,6 +25,8 @@ jobs:
         with: { node-version: '20' }
       - name: Install & Build
         run: cd packages/services/processor && npm ci && npm run build
+      - name: Test
+        run: cd packages/services/processor && npm test
 
   build-validator:
     runs-on: ubuntu-latest
@@ -32,6 +36,8 @@ jobs:
         with: { node-version: '20' }
       - name: Install & Build
         run: cd packages/services/validator && npm ci && npm run build
+      - name: Test
+        run: cd packages/services/validator && npm test
 
   build-sdk:
     runs-on: ubuntu-latest
@@ -41,3 +47,5 @@ jobs:
         with: { node-version: '20' }
       - name: Install & Build
         run: cd packages/sdk && npm ci && npm run build
+      - name: Test
+        run: cd packages/sdk && npm test
