@@ -82,10 +82,11 @@ SEC EDGAR / DTCC / Data APIs  -->  Ingestion Layer  -->  Normalization Engine
 
 Comprehensive testing suite with 100+ tests across 5 categories:
 
-### Unit Tests (11 files)
+### Unit Tests (12 files)
 Every contract has dedicated unit tests covering happy paths, revert conditions, edge cases, access control, and state transitions:
 - `ActionRegistry.t.sol` - Proposal, validation, execution, cancellation, reversal, emergency, timelock, TTL, routing, permissions
 - `ValidatorManager.t.sol` - Add/remove validators, quorum, signatures, super majority
+- `TimelockController.t.sol` - Default timelocks per action type, configuration, validation
 - `DividendDistributor.t.sol` - Execute, claim, withholding tax, double-claim, expiry, reclaim
 - `SplitExecutor.t.sol` - Forward/reverse splits, cash-in-lieu, multiplier verification
 - `MergerHandler.t.sol` - All 3 merger types, elections, proration, finalization
@@ -94,16 +95,17 @@ Every contract has dedicated unit tests covering happy paths, revert conditions,
 - `TickerMigrator.t.sol` - Execute, claim migration, proof verification
 - `FeeCollector.t.sol` - Fee calculation per type, caps, collection, permissions
 - `AttestationRegistry.t.sol` - Submit, verify, query, access control
-
 - `MultiplierMath.t.sol` - Arithmetic operations, rounding, edge cases
 
-### Integration Tests (7 files)
+### Integration Tests (10 files)
 End-to-end scenarios exercising the full pipeline:
 - **Dividend Flow** - Full propose -> validate -> execute -> Merkle claim pipeline
 - **Stock Split** - 4:1 forward split -> multiplier verification -> balanceOfUI
 - **Reverse Split + Fractional** - 1:10 reverse split -> cash-in-lieu claims
 - **Merger Flow** - Stock-for-stock -> freeze -> distribute -> exchange ratio
-- **Delisting Flow** - Complete 5-phase process
+- **Delisting Flow** - Complete 5-phase process with time-gated transitions
+- **Spinoff Flow** - New token distribution via Merkle claims post-spinoff
+- **Ticker Change Flow** - Token migration with symbol update and holder claims
 - **Emergency Pause** - Mid-execution pause -> freeze -> supermajority resume
 - **Conflicting Actions** - Same token split + delisting conflict handling
 
@@ -306,8 +308,8 @@ corpaction-engine/
 │   │   │   ├── interfaces/     # IActionRegistry, IActionExecutor, IERC8056, IAttestationRegistry, IFeeCollector
 │   │   │   └── libraries/      # MultiplierMath, ActionLib, MerkleDistributor
 │   │   ├── test/
-│   │   │   ├── unit/           # 10 unit test files
-│   │   │   ├── integration/    # 7 integration test scenarios
+│   │   │   ├── unit/           # 12 unit test files
+│   │   │   ├── integration/    # 10 integration test scenarios
 │   │   │   ├── fuzz/           # MultiplierMath fuzz tests
 │   │   │   ├── invariant/      # 5 invariant property tests
 │   │   │   ├── scenarios/      # 5 real-world replay tests
@@ -391,6 +393,87 @@ All contracts are deployed to the **Robinhood Chain Testnet** via UUPS proxies:
 | SpinoffExecutor | `0x7622951A02f1Ea1685c87AC31A769B7f822AD544` |
 | DelistingManager | `0xb42Ad9213eA7fa316880ee4A6e32a78A073D1C61` |
 | TickerMigrator | `0x930812f4deb7ec3E6741b47D7187A70b90368444` |
+
+### On-Chain Configuration (Live)
+
+The following configuration is live on the deployed contracts:
+
+**Validator Quorum Requirements:**
+
+| Severity | Action Types | Quorum | Timelock |
+|----------|-------------|--------|----------|
+| Low | Ticker Change | 1-of-1 (demo) | 1 hour |
+| Medium | Dividend, Forward Split, Reverse Split | 1-of-1 (demo) | 1-2 hours |
+| High | Merger (Cash/Stock/Hybrid), Spinoff, Delisting, Liquidation | 1-of-1 (demo) | 24-48 hours |
+
+> Note: Quorums set to 1-of-1 for testnet demo. Production configuration: Low=2-of-3, Medium=3-of-5, High=4-of-5.
+
+**Fee Schedule (On-Chain, 1000 holders example):**
+
+| Action Type | Calculated Fee |
+|-------------|---------------|
+| Dividend | 110.0 USDC |
+| Forward Split | 50.0 USDC |
+| Reverse Split | 105.0 USDC |
+| Merger (Cash) | 520.0 USDC |
+| Merger (Stock/Hybrid) | 1,050.0 USDC |
+| Spinoff | 520.0 USDC |
+| Delisting/Liquidation | 210.0 USDC |
+| Ticker Change | 110.0 USDC |
+
+### On-Chain Demo Transactions
+
+The following corporate action intents have been proposed on Robinhood Chain Testnet, demonstrating the full ActionRegistry lifecycle:
+
+| Corporate Action | Ticker | Type | Tx Hash | Block |
+|-----------------|--------|------|---------|-------|
+| AAPL Q2 2026 Dividend ($0.26/share) | AAPL | DIVIDEND | [`0xb8bdbd5f...`](https://explorer.testnet.chain.robinhood.com/tx/0xb8bdbd5f2c4776c0a176baf41dece27059c12de88a80e4729d004294101e1965) | 54496970 |
+| NVDA 10:1 Forward Split | NVDA | FORWARD_SPLIT | [`0x9c19406e...`](https://explorer.testnet.chain.robinhood.com/tx/0x9c19406ebe614c9b99b8d3e95fc58529e5a87ef0806ebf922154ded683749ff0) | 54497028 |
+| GOOGL 1:20 Reverse Split | GOOGL | REVERSE_SPLIT | [`0xcf406b29...`](https://explorer.testnet.chain.robinhood.com/tx/0xcf406b298389a3af2f86b3dbcd05b02c0f7f66a83e791ace1fd65ea086a3813e) | 54497084 |
+| MSFT Cash Merger @ $420/share | MSFT | MERGER_CASH | [`0x4992778c...`](https://explorer.testnet.chain.robinhood.com/tx/0x4992778ca6b7672b28001306560b26b88518539bca758b68d6d2af6f5e0ce5d0) | 54497142 |
+| TWTR Delisting @ $54.20 | TWTR | DELISTING | [`0xfdb3e662...`](https://explorer.testnet.chain.robinhood.com/tx/0xfdb3e6629b28ec13c80e283e5d3af5c4f8912e45e31c759b3dbbbbedae9ae43b) | 54497197 |
+| FB -> META Ticker Change | FB | TICKER_CHANGE | [`0xff7c0359...`](https://explorer.testnet.chain.robinhood.com/tx/0xff7c0359cd55100b29a3507cb9709eefe71ad58a82529c5789f5c6ee8468d1a4) | 54497252 |
+| ATT Spinoff (WBD 0.241917 ratio) | T | SPINOFF | [`0x8c3b2218...`](https://explorer.testnet.chain.robinhood.com/tx/0x8c3b2218cde52812ec615e2c794824fee054da811c26084d0c0833a72e5c0c44) | 54497317 |
+
+**Additional On-Chain Operations:**
+
+| Operation | Tx Hash | Block |
+|-----------|---------|-------|
+| Submit Attestation (AAPL DIV, SEC_EDGAR) | [`0x9f89349e...`](https://explorer.testnet.chain.robinhood.com/tx/0x9f89349ed9aae35ed71fd519ef470f994bee33384421c76067cc36250bf7bcae) | 54495983 |
+| Verify Attestation (AAPL DIV) | [`0xedb25092...`](https://explorer.testnet.chain.robinhood.com/tx/0xedb2509228de223a49f57ff9c603131038fea320f91bd1377600a9f2c0ea5e1d) | 54496041 |
+| Emergency Pause (Circuit Breaker) | [`0x4003de99...`](https://explorer.testnet.chain.robinhood.com/tx/0x4003de9944bf596d7d9b7084bce041c6a0e0015e272218d899a7d09bca6fe7e2) | 54494516 |
+| Emergency Resume (Super-Majority) | [`0x01cebb20...`](https://explorer.testnet.chain.robinhood.com/tx/0x01cebb2033deb2f86db51b3d7cd9e6816c045235a53f13fbabd07f453541b32c) | 54495735 |
+| Cancel Action (ATT Spinoff) | [`0x723e0e42...`](https://explorer.testnet.chain.robinhood.com/tx/0x723e0e420c3baff641a6b5d838998beddab6058b955f1e6d2715a9a09c6e3cc5) | 54497371 |
+| Configure Quorum (DIVIDEND) | [`0xd5a40429...`](https://explorer.testnet.chain.robinhood.com/tx/0xd5a40429e4d832350c1835fffa2311b5b905131356629934a9b9d8f0a7c44ba5) | — |
+| Configure Quorum (FORWARD_SPLIT) | [`0x389cb3ed...`](https://explorer.testnet.chain.robinhood.com/tx/0x389cb3eda092b13419111dcb243a87b7c0a27e23b944620626421183a1989722) | — |
+| Configure Quorum (MERGER_CASH) | [`0xeac6cc1a...`](https://explorer.testnet.chain.robinhood.com/tx/0xeac6cc1a723a7d976f215b549720c8adfb94e70aa63316293ce605ef40cd2346) | — |
+| Configure Quorum (DELISTING) | [`0x206ceb6e...`](https://explorer.testnet.chain.robinhood.com/tx/0x206ceb6ebbb71a771e586b1d1f84100483672ecb40aa3bdb426f62599e06d39b) | — |
+| Set Super-Majority (1-of-1 demo) | [`0xea0d7f1c...`](https://explorer.testnet.chain.robinhood.com/tx/0xea0d7f1cceb14a9c0495a1d88a6cabfdde2703ad4ada9a9e707b6b19251c2195) | — |
+
+**Total on-chain corporate actions: 7** (6 active + 1 cancelled)
+
+### On-Chain Intent IDs
+
+| Action | Intent ID |
+|--------|-----------|
+| AAPL Dividend | `0x457c3cdfee64eb87244d7442b03329987bd95b89d622b49bc6c4f7308802e1b0` |
+| NVDA 10:1 Split | `0x1e1281e894faf136090f12275a39dcf0d303f29d721c7d1433b392413b255e6e` |
+| GOOGL 1:20 Reverse Split | `0xb2580eb02c694b5f71eebd2dc258be7aa7c39417673b9e6681e6c9906b78ea26` |
+| MSFT Cash Merger | `0x5d0907fa16cbdb92ec5eb0240c825b7534d1a49870d31961197ca5b32b4fe5fa` |
+| TWTR Delisting | `0xe76a3db75f1e7ae4029aa267c989865553c74938ff69040937c8e7e8744dae96` |
+| FB->META Ticker Change | `0x5a6ce2840fe31f7fff32f032e97d730766ad5d2d955b42cdc765f7e21aa466b7` |
+| ATT Spinoff (cancelled) | `0x1accafb6edcfa13469c3fad0b0060db732eb3018c79bc8cc44e40ed6103672fc` |
+
+### Source Attestation (On-Chain)
+
+| Field | Value |
+|-------|-------|
+| Intent ID | `0x75a2174f67e458acd8588b6665d86b66e40deeea6fb857a2d87d58baf63cd8f3` |
+| Attestation ID | `0x9bb74438cc3f96b3e81c8bd09dcc1dc4a615cbee78ea50260fb1fb09abae796a` |
+| Source | SEC_EDGAR |
+| Filing | `0000320193-26-000050` |
+| Status | Verified |
+| EIP-712 | Typed data signature verified on-chain |
 
 ## Metrics Endpoints
 
