@@ -291,4 +291,194 @@ contract ActionRegistryTest is Test {
         vm.expectRevert();
         registry.setTimelock(ICorpActionTypes.ActionType.DIVIDEND, 1 days);
     }
+
+    function _proposeValidateQueueExecute() internal returns (bytes32 intentId) {
+        // Register a mock executor so execution succeeds with FAILED state (EOA)
+        address dividendExecutor = makeAddr("dividendExecutor");
+        registry.registerExecutor(ICorpActionTypes.ActionType.DIVIDEND, dividendExecutor);
+        registry.setTimelock(ICorpActionTypes.ActionType.DIVIDEND, 0);
+
+        ICorpActionTypes.ActionIntent memory intent = _buildDividendIntent();
+
+        // Propose
+        bytes32 hash = keccak256(abi.encode(intent));
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(validator1Key,
+            keccak256(abi.encodePacked("\x19Ethereum Signed Message:\n32", hash)));
+        intentId = registry.proposeAction(intent, abi.encodePacked(r, s, v));
+
+        // Validate to reach quorum
+        bytes32 valHash = keccak256(abi.encode(
+            intentId, intent.actionType, intent.targetToken, intent.actionParams
+        ));
+        (v, r, s) = vm.sign(validator2Key,
+            keccak256(abi.encodePacked("\x19Ethereum Signed Message:\n32", valHash)));
+        registry.validateAction(intentId, abi.encodePacked(r, s, v));
+
+        // Queue
+        ICorpActionTypes.ActionIntent memory stored = registry.getAction(intentId);
+        if (stored.state == ICorpActionTypes.ActionState.VALIDATED) {
+            registry.queueAction(intentId);
+        }
+
+        // Execute (will FAIL since executor is an EOA, which is fine for reversal tests)
+        registry.executeAction(intentId);
+    }
+
+    function test_reverseAction() public {
+        bytes32 intentId = _proposeValidateQueueExecute();
+
+        // The action should be in FAILED state since executor is an EOA.
+        // For reverseAction we need EXECUTED state, so we need a real executor.
+        // Instead, let's build a fresh intent and mock EXECUTED state via a
+        // contract that returns bytes from execute().
+
+        // Use a different approach: deploy a minimal executor mock
+        MockExecutor mockExec = new MockExecutor();
+        registry.registerExecutor(ICorpActionTypes.ActionType.DIVIDEND, address(mockExec));
+
+        // Build a new intent with a different ID
+        ICorpActionTypes.ActionIntent memory intent = ICorpActionTypes.ActionIntent({
+            intentId: keccak256("test-dividend-reverse"),
+            actionType: ICorpActionTypes.ActionType.DIVIDEND,
+            targetToken: address(stockToken),
+            ticker: "AAPL",
+            isin: "US0378331005",
+            recordDate: block.timestamp + 1 days,
+            exDate: block.timestamp + 2 days,
+            effectiveDate: block.timestamp + 3 days,
+            actionParams: abi.encode(uint256(100e6)),
+            sourceAttestation: keccak256("source-reverse"),
+            state: ICorpActionTypes.ActionState.PROPOSED,
+            createdAt: 0,
+            executedAt: 0
+        });
+
+        // Propose
+        bytes32 hash = keccak256(abi.encode(intent));
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(validator1Key,
+            keccak256(abi.encodePacked("\x19Ethereum Signed Message:\n32", hash)));
+        bytes32 newIntentId = registry.proposeAction(intent, abi.encodePacked(r, s, v));
+
+        // Validate
+        bytes32 valHash = keccak256(abi.encode(
+            newIntentId, intent.actionType, intent.targetToken, intent.actionParams
+        ));
+        (v, r, s) = vm.sign(validator2Key,
+            keccak256(abi.encodePacked("\x19Ethereum Signed Message:\n32", valHash)));
+        registry.validateAction(newIntentId, abi.encodePacked(r, s, v));
+
+        // Queue and execute
+        ICorpActionTypes.ActionIntent memory stored = registry.getAction(newIntentId);
+        if (stored.state == ICorpActionTypes.ActionState.VALIDATED) {
+            registry.queueAction(newIntentId);
+        }
+        registry.executeAction(newIntentId);
+
+        // Verify EXECUTED state
+        stored = registry.getAction(newIntentId);
+        assertEq(uint8(stored.state), uint8(ICorpActionTypes.ActionState.EXECUTED));
+
+        // Build reverse signatures from all 3 validators
+        string memory reason = "Erroneous corporate action";
+        bytes32 reverseHash = keccak256(
+            abi.encodePacked("REVERSE_ACTION", newIntentId, reason)
+        );
+
+        bytes[] memory sigs = new bytes[](3);
+        (v, r, s) = vm.sign(validator1Key,
+            keccak256(abi.encodePacked("\x19Ethereum Signed Message:\n32", reverseHash)));
+        sigs[0] = abi.encodePacked(r, s, v);
+        (v, r, s) = vm.sign(validator2Key,
+            keccak256(abi.encodePacked("\x19Ethereum Signed Message:\n32", reverseHash)));
+        sigs[1] = abi.encodePacked(r, s, v);
+        (v, r, s) = vm.sign(validator3Key,
+            keccak256(abi.encodePacked("\x19Ethereum Signed Message:\n32", reverseHash)));
+        sigs[2] = abi.encodePacked(r, s, v);
+
+        // Reverse the action
+        registry.reverseAction(newIntentId, reason, sigs);
+
+        // Verify REVERSED state
+        stored = registry.getAction(newIntentId);
+        assertEq(uint8(stored.state), uint8(ICorpActionTypes.ActionState.REVERSED));
+    }
+
+    function test_revert_reverseAction_notExecuted() public {
+        ICorpActionTypes.ActionIntent memory intent = _buildDividendIntent();
+
+        bytes32 hash = keccak256(abi.encode(intent));
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(validator1Key,
+            keccak256(abi.encodePacked("\x19Ethereum Signed Message:\n32", hash)));
+        bytes32 newIntentId = registry.proposeAction(intent, abi.encodePacked(r, s, v));
+
+        // Try to reverse a PROPOSED action (should fail)
+        bytes[] memory sigs = new bytes[](0);
+        vm.expectRevert(abi.encodeWithSelector(
+            ActionRegistry.InvalidState.selector,
+            newIntentId,
+            ICorpActionTypes.ActionState.PROPOSED,
+            ICorpActionTypes.ActionState.EXECUTED
+        ));
+        registry.reverseAction(newIntentId, "bad", sigs);
+    }
+
+    function test_revert_reverseAction_insufficientSignatures() public {
+        MockExecutor mockExec = new MockExecutor();
+        registry.registerExecutor(ICorpActionTypes.ActionType.DIVIDEND, address(mockExec));
+        registry.setTimelock(ICorpActionTypes.ActionType.DIVIDEND, 0);
+
+        ICorpActionTypes.ActionIntent memory intent = ICorpActionTypes.ActionIntent({
+            intentId: keccak256("test-dividend-insuf-reverse"),
+            actionType: ICorpActionTypes.ActionType.DIVIDEND,
+            targetToken: address(stockToken),
+            ticker: "AAPL",
+            isin: "US0378331005",
+            recordDate: block.timestamp + 1 days,
+            exDate: block.timestamp + 2 days,
+            effectiveDate: block.timestamp + 3 days,
+            actionParams: abi.encode(uint256(100e6)),
+            sourceAttestation: keccak256("source-insuf"),
+            state: ICorpActionTypes.ActionState.PROPOSED,
+            createdAt: 0,
+            executedAt: 0
+        });
+
+        bytes32 hash = keccak256(abi.encode(intent));
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(validator1Key,
+            keccak256(abi.encodePacked("\x19Ethereum Signed Message:\n32", hash)));
+        bytes32 newIntentId = registry.proposeAction(intent, abi.encodePacked(r, s, v));
+
+        bytes32 valHash = keccak256(abi.encode(
+            newIntentId, intent.actionType, intent.targetToken, intent.actionParams
+        ));
+        (v, r, s) = vm.sign(validator2Key,
+            keccak256(abi.encodePacked("\x19Ethereum Signed Message:\n32", valHash)));
+        registry.validateAction(newIntentId, abi.encodePacked(r, s, v));
+
+        ICorpActionTypes.ActionIntent memory stored = registry.getAction(newIntentId);
+        if (stored.state == ICorpActionTypes.ActionState.VALIDATED) {
+            registry.queueAction(newIntentId);
+        }
+        registry.executeAction(newIntentId);
+
+        // Only provide 1 signature (need 3)
+        string memory reason = "Insufficient sigs test";
+        bytes32 reverseHash = keccak256(
+            abi.encodePacked("REVERSE_ACTION", newIntentId, reason)
+        );
+        bytes[] memory sigs = new bytes[](1);
+        (v, r, s) = vm.sign(validator1Key,
+            keccak256(abi.encodePacked("\x19Ethereum Signed Message:\n32", reverseHash)));
+        sigs[0] = abi.encodePacked(r, s, v);
+
+        vm.expectRevert(); // Need all validator signatures
+        registry.reverseAction(newIntentId, reason, sigs);
+    }
+}
+
+/// @dev Minimal mock executor that returns empty bytes on execute
+contract MockExecutor is ICorpActionTypes {
+    function execute(ICorpActionTypes.ActionIntent calldata) external pure returns (bytes memory) {
+        return "";
+    }
 }

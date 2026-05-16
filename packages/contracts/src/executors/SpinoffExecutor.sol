@@ -3,7 +3,7 @@ pragma solidity ^0.8.24;
 
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
-import {MerkleProof} from "@openzeppelin/contracts/utils/cryptography/MerkleProof.sol";
+import {MerkleDistributor} from "../libraries/MerkleDistributor.sol";
 import {UUPSUpgradeable} from
     "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import {ReentrancyGuardUpgradeable} from
@@ -92,10 +92,7 @@ contract SpinoffExecutor is
         if (block.timestamp > state.params.claimDeadline)
             revert ClaimExpired(intentId);
 
-        bytes32 leaf = keccak256(
-            bytes.concat(keccak256(abi.encode(msg.sender, amount)))
-        );
-        if (!MerkleProof.verify(merkleProof, state.params.merkleRoot, leaf))
+        if (!MerkleDistributor.verifyProof(merkleProof, state.params.merkleRoot, msg.sender, amount))
             revert InvalidMerkleProof();
 
         spinoffClaimed[intentId][msg.sender] = true;

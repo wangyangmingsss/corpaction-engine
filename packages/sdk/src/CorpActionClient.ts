@@ -44,8 +44,7 @@ const ATTESTATION_ABI = [
 ];
 
 const SPLIT_EXECUTOR_ABI = [
-  'function getAdjustmentFactor(bytes32 intentId) external view returns (uint256 numerator, uint256 denominator)',
-  'event SplitExecuted(bytes32 indexed intentId, address indexed token, uint256 numerator, uint256 denominator)',
+  'event SplitExecuted(bytes32 indexed intentId, address indexed token, uint256 oldMultiplier, uint256 newMultiplier, uint256 numerator, uint256 denominator, bool isReverse)',
 ];
 
 const MERGER_HANDLER_ABI = [
@@ -313,7 +312,7 @@ export class CorpActionClient {
   }
 
   onSplitExecuted(
-    callback: (event: { intentId: string; token: string; numerator: bigint; denominator: bigint }) => void
+    callback: (event: { intentId: string; token: string; oldMultiplier: bigint; newMultiplier: bigint; numerator: bigint; denominator: bigint; isReverse: boolean }) => void
   ): () => void {
     if (!this.config.splitExecutorAddress) {
       throw new CorpActionError(CorpActionErrorType.NOT_CONFIGURED, 'SplitExecutor address not configured');
@@ -323,8 +322,8 @@ export class CorpActionClient {
       SPLIT_EXECUTOR_ABI,
       this.provider
     );
-    const handler = (intentId: string, token: string, numerator: bigint, denominator: bigint) => {
-      callback({ intentId, token, numerator, denominator });
+    const handler = (intentId: string, token: string, oldMultiplier: bigint, newMultiplier: bigint, numerator: bigint, denominator: bigint, isReverse: boolean) => {
+      callback({ intentId, token, oldMultiplier, newMultiplier, numerator, denominator, isReverse });
     };
     executor.on('SplitExecuted', handler);
     return () => executor.off('SplitExecuted', handler);
@@ -598,10 +597,10 @@ export class CorpActionClient {
 
       const event = events[events.length - 1];
       const args = (event as ethers.EventLog).args;
-      const numerator = BigInt(args[2]);
-      const denominator = BigInt(args[3]);
+      const numerator = BigInt(args[4]);
+      const denominator = BigInt(args[5]);
 
-      // adjustmentFactor = newMultiplier / oldMultiplier = numerator / denominator
+      // adjustmentFactor = newMultiplier / oldMultiplier
       const adjustmentFactor = Number(numerator) / Number(denominator);
 
       return { numerator, denominator, adjustmentFactor };
