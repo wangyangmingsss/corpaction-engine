@@ -24,18 +24,18 @@ contract StateMachineInvariantHandler is Test {
 
         try mgr.advancePhase(intentId) {} catch {}
 
-        (, uint8 currentPhase,,,,,) = mgr.delistings(intentId);
-        if (currentPhase > highestPhaseReached) {
-            highestPhaseReached = currentPhase;
+        (, DelistingManager.DelistingPhase currentPhase,,,,,) = mgr.delistings(intentId);
+        if (uint8(currentPhase) > highestPhaseReached) {
+            highestPhaseReached = uint8(currentPhase);
         }
     }
 
     function freezeToken() external {
         try mgr.freezeToken(intentId) {} catch {}
 
-        (, uint8 currentPhase,,,,,) = mgr.delistings(intentId);
-        if (currentPhase > highestPhaseReached) {
-            highestPhaseReached = currentPhase;
+        (, DelistingManager.DelistingPhase currentPhase,,,,,) = mgr.delistings(intentId);
+        if (uint8(currentPhase) > highestPhaseReached) {
+            highestPhaseReached = uint8(currentPhase);
         }
     }
 }
@@ -95,16 +95,16 @@ contract StateMachineInvariantTest is Test {
 
     /// @dev Invariant: state transitions never go backward (phase ordinal only increases)
     function invariant_stateNeverGoesBackward() public view {
-        (, uint8 currentPhase,,,,,) = mgr.delistings(intentId);
+        (, DelistingManager.DelistingPhase currentPhase,,,,,) = mgr.delistings(intentId);
         // Current phase should always be >= ANNOUNCED (1) if initialized
-        assertGe(currentPhase, uint8(DelistingManager.DelistingPhase.ANNOUNCED));
+        assertGe(uint8(currentPhase), uint8(DelistingManager.DelistingPhase.ANNOUNCED));
     }
 
     /// @dev Invariant: FROZEN is terminal
     function invariant_frozenIsTerminal() public view {
-        (, uint8 currentPhase,,,,,) = mgr.delistings(intentId);
+        (, DelistingManager.DelistingPhase currentPhase,,,,,) = mgr.delistings(intentId);
         if (handler.highestPhaseReached() == uint8(DelistingManager.DelistingPhase.FROZEN)) {
-            assertEq(currentPhase, uint8(DelistingManager.DelistingPhase.FROZEN));
+            assertEq(uint8(currentPhase), uint8(DelistingManager.DelistingPhase.FROZEN));
         }
     }
 }

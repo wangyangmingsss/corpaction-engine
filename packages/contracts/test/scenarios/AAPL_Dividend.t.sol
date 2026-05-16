@@ -131,7 +131,7 @@ contract AAPL_DividendTest is Test {
         assertEq(usdc.balanceOf(indexFund), INDEX_AMOUNT);
 
         // Verify pool fully distributed
-        (,,uint256 totalClaimed,,) = distributor.dividends(intentId);
+        (,uint256 totalClaimed,,) = distributor.dividends(intentId);
         assertEq(totalClaimed, TOTAL_POOL);
     }
 

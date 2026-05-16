@@ -170,13 +170,13 @@ import { CorpActionClient } from '@corpaction/sdk';
 
 const client = new CorpActionClient({
   rpcUrl: 'https://rpc.testnet.chain.robinhood.com',
-  registryAddress: '0x...',
-  dividendDistributorAddress: '0x...',
-  splitExecutorAddress: '0x...',
-  mergerHandlerAddress: '0x...',
-  delistingManagerAddress: '0x...',
-  spinoffExecutorAddress: '0x...',
-  tickerMigratorAddress: '0x...',
+  registryAddress: '0x1D3c8f75A0822c56FC1d7DDd41106a469f3E1A35',
+  dividendDistributorAddress: '0x6f1fCb522466025Cae1e36306993ddA8Befdd01A',
+  splitExecutorAddress: '0x710a6aCf4C11eD4E80baCE15C50193328A3c73E4',
+  mergerHandlerAddress: '0x33a4306e197444f15E38cb449C9C8a1C227e8bBe',
+  delistingManagerAddress: '0xb42Ad9213eA7fa316880ee4A6e32a78A073D1C61',
+  spinoffExecutorAddress: '0x7622951A02f1Ea1685c87AC31A769B7f822AD544',
+  tickerMigratorAddress: '0x930812f4deb7ec3E6741b47D7187A70b90368444',
   chainId: 46630,
 });
 
@@ -367,13 +367,30 @@ The controller integrates with `ActionRegistry` to gate the `execute()` call, en
 
 ## Testnet Deployment
 
-The contracts are deployed to the **Robinhood Chain Testnet**:
+All contracts are deployed to the **Robinhood Chain Testnet** via UUPS proxies:
 
 | Parameter | Value |
 |-----------|-------|
-| Chain ID | 46630 |
+| Chain ID | `46630` |
 | RPC URL | `https://rpc.testnet.chain.robinhood.com` |
+| Block Explorer | `https://explorer.testnet.chain.robinhood.com` |
 | USDG Contract | `0x7E955252E15c84f5768B83c41a71F9eba181802F` |
+
+### Deployed Contract Addresses
+
+| Contract | Address |
+|----------|---------|
+| ValidatorManager | `0xE3fe1728B0Ff8811d1f65Edfe3C9bb58B0a88473` |
+| TimelockController | `0x562B3c6302156646f92fc6081734DeeECF4E2e45` |
+| AttestationRegistry | `0x9937D10097C189CF0D05dF64F88F975e7977a8eb` |
+| ActionRegistry | `0x1D3c8f75A0822c56FC1d7DDd41106a469f3E1A35` |
+| FeeCollector | `0x2D5bB4a05Cc741905dcd1F2109349a3c089B66b1` |
+| DividendDistributor | `0x6f1fCb522466025Cae1e36306993ddA8Befdd01A` |
+| SplitExecutor | `0x710a6aCf4C11eD4E80baCE15C50193328A3c73E4` |
+| MergerHandler | `0x33a4306e197444f15E38cb449C9C8a1C227e8bBe` |
+| SpinoffExecutor | `0x7622951A02f1Ea1685c87AC31A769B7f822AD544` |
+| DelistingManager | `0xb42Ad9213eA7fa316880ee4A6e32a78A073D1C61` |
+| TickerMigrator | `0x930812f4deb7ec3E6741b47D7187A70b90368444` |
 
 ## Metrics Endpoints
 

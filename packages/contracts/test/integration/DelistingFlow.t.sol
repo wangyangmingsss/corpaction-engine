@@ -127,25 +127,25 @@ contract DelistingFlowTest is Test {
         registry.executeAction(intentId);
 
         // Phase 1: ANNOUNCED
-        (, uint8 phase,,,,,) = delistMgr.delistings(intentId);
-        assertEq(phase, uint8(DelistingManager.DelistingPhase.ANNOUNCED));
+        (, DelistingManager.DelistingPhase phase,,,,,) = delistMgr.delistings(intentId);
+        assertEq(uint8(phase), uint8(DelistingManager.DelistingPhase.ANNOUNCED));
 
         // Phase 2: SELL_ONLY
         vm.warp(sellOnlyTime);
         delistMgr.advancePhase(intentId);
         (, phase,,,,,) = delistMgr.delistings(intentId);
-        assertEq(phase, uint8(DelistingManager.DelistingPhase.SELL_ONLY));
+        assertEq(uint8(phase), uint8(DelistingManager.DelistingPhase.SELL_ONLY));
 
         // Phase 3: PRICE_LOCKED
         vm.warp(priceLockTime);
         delistMgr.advancePhase(intentId);
         (, phase,,,,,) = delistMgr.delistings(intentId);
-        assertEq(phase, uint8(DelistingManager.DelistingPhase.PRICE_LOCKED));
+        assertEq(uint8(phase), uint8(DelistingManager.DelistingPhase.PRICE_LOCKED));
 
         // Phase 4: LIQUIDATING
         delistMgr.advancePhase(intentId);
         (, phase,,,,,) = delistMgr.delistings(intentId);
-        assertEq(phase, uint8(DelistingManager.DelistingPhase.LIQUIDATING));
+        assertEq(uint8(phase), uint8(DelistingManager.DelistingPhase.LIQUIDATING));
 
         // Alice claims liquidation
         vm.prank(alice);
@@ -155,6 +155,6 @@ contract DelistingFlowTest is Test {
         // Phase 5: FROZEN
         delistMgr.freezeToken(intentId);
         (, phase,,,,,) = delistMgr.delistings(intentId);
-        assertEq(phase, uint8(DelistingManager.DelistingPhase.FROZEN));
+        assertEq(uint8(phase), uint8(DelistingManager.DelistingPhase.FROZEN));
     }
 }

@@ -149,7 +149,7 @@ contract DividendInvariantTest is Test {
 
     /// @dev Invariant: pool total == claimed + unclaimed (balance remaining in contract)
     function invariant_poolTotalEqualsClaimedPlusUnclaimed() public view {
-        (,,uint256 totalClaimed,,) = distributor.dividends(intentId);
+        (,uint256 totalClaimed,,) = distributor.dividends(intentId);
         uint256 contractBalance = usdc.balanceOf(address(distributor));
         uint256 treasuryBalance = usdc.balanceOf(treasury);
 

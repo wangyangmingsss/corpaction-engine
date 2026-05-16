@@ -113,11 +113,11 @@ contract EmergencyPauseTest is Test {
         );
         bytes[] memory sigs = new bytes[](4);
         for (uint i = 0; i < 4; i++) {
-            (uint8 v, bytes32 r, bytes32 s) = vm.sign(
+            (uint8 v2, bytes32 r2, bytes32 s2) = vm.sign(
                 validatorKeys[i],
                 keccak256(abi.encodePacked("\x19Ethereum Signed Message:\n32", resumeHash))
             );
-            sigs[i] = abi.encodePacked(r, s, v);
+            sigs[i] = abi.encodePacked(r2, s2, v2);
         }
         registry.emergencyResume(sigs);
 

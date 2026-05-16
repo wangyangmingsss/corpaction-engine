@@ -75,9 +75,9 @@ contract DelistingManagerTest is Test {
         bytes32 intentId = keccak256("delist-1");
         _initDelisting(intentId);
 
-        (, uint8 phase, bool initialized,,,,) = mgr.delistings(intentId);
+        (, DelistingManager.DelistingPhase phase, bool initialized,,,,) = mgr.delistings(intentId);
         assertTrue(initialized);
-        assertEq(phase, uint8(DelistingManager.DelistingPhase.ANNOUNCED));
+        assertEq(uint8(phase), uint8(DelistingManager.DelistingPhase.ANNOUNCED));
     }
 
     function test_phase_sellOnly() public {
@@ -87,8 +87,8 @@ contract DelistingManagerTest is Test {
         vm.warp(params.sellOnlyTime);
         mgr.advancePhase(intentId);
 
-        (, uint8 phase,,,,,) = mgr.delistings(intentId);
-        assertEq(phase, uint8(DelistingManager.DelistingPhase.SELL_ONLY));
+        (, DelistingManager.DelistingPhase phase,,,,,) = mgr.delistings(intentId);
+        assertEq(uint8(phase), uint8(DelistingManager.DelistingPhase.SELL_ONLY));
     }
 
     function test_phase_priceLocked() public {
@@ -101,8 +101,8 @@ contract DelistingManagerTest is Test {
         vm.warp(params.priceLockTime);
         mgr.advancePhase(intentId);
 
-        (, uint8 phase,,,,,) = mgr.delistings(intentId);
-        assertEq(phase, uint8(DelistingManager.DelistingPhase.PRICE_LOCKED));
+        (, DelistingManager.DelistingPhase phase,,,,,) = mgr.delistings(intentId);
+        assertEq(uint8(phase), uint8(DelistingManager.DelistingPhase.PRICE_LOCKED));
     }
 
     function test_phase_liquidating() public {
@@ -115,8 +115,8 @@ contract DelistingManagerTest is Test {
         mgr.advancePhase(intentId);
         mgr.advancePhase(intentId); // PRICE_LOCKED -> LIQUIDATING
 
-        (, uint8 phase,,,,,) = mgr.delistings(intentId);
-        assertEq(phase, uint8(DelistingManager.DelistingPhase.LIQUIDATING));
+        (, DelistingManager.DelistingPhase phase,,,,,) = mgr.delistings(intentId);
+        assertEq(uint8(phase), uint8(DelistingManager.DelistingPhase.LIQUIDATING));
     }
 
     function test_phase_frozen() public {
@@ -130,8 +130,8 @@ contract DelistingManagerTest is Test {
         mgr.advancePhase(intentId);
         mgr.freezeToken(intentId);
 
-        (, uint8 phase,,,,,) = mgr.delistings(intentId);
-        assertEq(phase, uint8(DelistingManager.DelistingPhase.FROZEN));
+        (, DelistingManager.DelistingPhase phase,,,,,) = mgr.delistings(intentId);
+        assertEq(uint8(phase), uint8(DelistingManager.DelistingPhase.FROZEN));
     }
 
     function test_claimLiquidation() public {
@@ -167,9 +167,9 @@ contract DelistingManagerTest is Test {
         mgr.disputeDelisting(intentId, "Pricing is unfair");
         mgr.rollbackDelisting(intentId);
 
-        (, uint8 phase, bool initialized,,,,) = mgr.delistings(intentId);
+        (, DelistingManager.DelistingPhase phase, bool initialized,,,,) = mgr.delistings(intentId);
         assertFalse(initialized);
-        assertEq(phase, uint8(DelistingManager.DelistingPhase.NONE));
+        assertEq(uint8(phase), uint8(DelistingManager.DelistingPhase.NONE));
     }
 
     function test_revert_skippedPhase() public {
@@ -179,8 +179,8 @@ contract DelistingManagerTest is Test {
         // Try to advance before sellOnlyTime -- should not change phase
         // since the condition won't match, the function just doesn't advance
         mgr.advancePhase(intentId);
-        (, uint8 phase,,,,,) = mgr.delistings(intentId);
-        assertEq(phase, uint8(DelistingManager.DelistingPhase.ANNOUNCED));
+        (, DelistingManager.DelistingPhase phase,,,,,) = mgr.delistings(intentId);
+        assertEq(uint8(phase), uint8(DelistingManager.DelistingPhase.ANNOUNCED));
     }
 
     function test_revert_claimAfterDeadline() public {

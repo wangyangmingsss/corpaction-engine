@@ -174,7 +174,7 @@ contract DividendDistributorTest is Test {
         returns (DividendDistributor.DividendParams memory, uint256, uint256, bool, bool)
     {
         // Read fields individually from the public mapping
-        (,,uint256 totalClaimed, bool initialized, bool fundsReclaimed) =
+        (,uint256 totalClaimed, bool initialized, bool fundsReclaimed) =
             distributor.dividends(id);
         DividendDistributor.DividendParams memory params;
         return (params, 0, totalClaimed, initialized, fundsReclaimed);

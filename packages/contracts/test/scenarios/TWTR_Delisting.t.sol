@@ -110,20 +110,20 @@ contract TWTR_DelistingTest is Test {
 
         // Phase 1: ANNOUNCED
         mgr.execute(intent);
-        (, uint8 phase,,,,,) = mgr.delistings(intentId);
-        assertEq(phase, uint8(DelistingManager.DelistingPhase.ANNOUNCED));
+        (, DelistingManager.DelistingPhase phase,,,,,) = mgr.delistings(intentId);
+        assertEq(uint8(phase), uint8(DelistingManager.DelistingPhase.ANNOUNCED));
 
         // Phase 2: SELL_ONLY
         vm.warp(sellOnlyTime);
         mgr.advancePhase(intentId);
         (, phase,,,,,) = mgr.delistings(intentId);
-        assertEq(phase, uint8(DelistingManager.DelistingPhase.SELL_ONLY));
+        assertEq(uint8(phase), uint8(DelistingManager.DelistingPhase.SELL_ONLY));
 
         // Phase 3: PRICE_LOCKED
         vm.warp(priceLockTime);
         mgr.advancePhase(intentId);
         (, phase,,,,,) = mgr.delistings(intentId);
-        assertEq(phase, uint8(DelistingManager.DelistingPhase.PRICE_LOCKED));
+        assertEq(uint8(phase), uint8(DelistingManager.DelistingPhase.PRICE_LOCKED));
 
         // Phase 4: LIQUIDATING
         mgr.advancePhase(intentId);
@@ -144,7 +144,7 @@ contract TWTR_DelistingTest is Test {
         // Phase 5: FROZEN
         mgr.freezeToken(intentId);
         (, phase,,,,,) = mgr.delistings(intentId);
-        assertEq(phase, uint8(DelistingManager.DelistingPhase.FROZEN));
+        assertEq(uint8(phase), uint8(DelistingManager.DelistingPhase.FROZEN));
     }
 
     function test_twtrDelisting_disputeAndRollback() public {
@@ -188,8 +188,8 @@ contract TWTR_DelistingTest is Test {
 
         // Rollback
         mgr.rollbackDelisting(intentId);
-        (, uint8 phase, bool initialized,,,,) = mgr.delistings(intentId);
+        (, DelistingManager.DelistingPhase phase2, bool initialized,,,,) = mgr.delistings(intentId);
         assertFalse(initialized);
-        assertEq(phase, uint8(DelistingManager.DelistingPhase.NONE));
+        assertEq(uint8(phase2), uint8(DelistingManager.DelistingPhase.NONE));
     }
 }

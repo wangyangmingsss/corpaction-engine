@@ -79,7 +79,7 @@ contract TickerMigratorTest is Test {
         assertEq(newT, address(newToken));
         assertEq(ticker, "META");
 
-        (,, bool initialized,) = migrator.migrations(intentId);
+        (,, bool initialized,,) = migrator.migrations(intentId);
         assertTrue(initialized);
     }
 
