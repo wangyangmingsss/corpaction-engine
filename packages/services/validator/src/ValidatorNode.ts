@@ -2,6 +2,7 @@ import { ethers } from 'ethers';
 import { Redis } from 'ioredis';
 import { SigningService } from './SigningService';
 import { SourceVerifier } from './SourceVerifier';
+import { registry } from './metrics';
 
 const ACTION_REGISTRY_ABI = [
   'event ActionProposed(bytes32 indexed intentId, uint8 indexed actionType, address indexed targetToken, string ticker)',
@@ -121,6 +122,7 @@ export class ValidatorNode {
             await tx.wait();
 
             this.log('info', 'Validation submitted on-chain', { intentId });
+            registry.counter('corpaction_validations_submitted_total', 'Validations submitted');
 
             // Notify other validators via Redis pub/sub
             await this.redis.publish(
@@ -138,6 +140,7 @@ export class ValidatorNode {
               intentId,
               details: verificationResult.details,
             });
+            registry.counter('corpaction_verification_conflicts_total', 'Verification conflicts');
 
             await this.redis.publish(
               'validator:coordination',
@@ -275,6 +278,7 @@ export class ValidatorNode {
           Date.now().toString(),
           'EX', 300
         );
+        registry.gauge('corpaction_validator_heartbeat', 'Validator heartbeat timestamp', Date.now());
       } catch (error) {
         this.log('error', 'Heartbeat error', { error: String(error) });
       }

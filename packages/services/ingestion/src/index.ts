@@ -1,7 +1,7 @@
 import { Redis } from 'ioredis';
 import { Pool } from 'pg';
 import { Logger } from './utils/Logger';
-import { startMetricsServer } from './metrics';
+import { registry, startMetricsServer } from './metrics';
 import { EdgarMonitor } from './sources/EdgarMonitor';
 import { EodHistoricalAdapter } from './sources/EodHistoricalAdapter';
 import { PolygonAdapter } from './sources/PolygonAdapter';
@@ -57,6 +57,7 @@ async function main() {
     try {
       const events = await source.poll();
       allEvents.push(...events);
+      registry.counter('corpaction_events_ingested_total', 'Total events ingested', { source: source.name });
       logger.info(`Polled ${events.length} events from ${source.name}`);
 
       // Persist raw events to PostgreSQL
@@ -85,11 +86,13 @@ async function main() {
       }
     } catch (error) {
       logger.error(`Failed to poll ${source.name}`, { error: String(error) });
+      registry.counter('corpaction_ingestion_errors_total', 'Ingestion errors', { source: source.name });
     }
   }
 
   // Deduplicate
   const { unique, duplicates, conflicts } = deduplicator.deduplicate(allEvents);
+  registry.gauge('corpaction_events_deduplicated', 'Deduplicated event counts', unique.length, { type: 'unique' });
   logger.info('Deduplication complete', {
     unique: unique.length,
     duplicates: duplicates.length,
@@ -100,6 +103,7 @@ async function main() {
   for (const event of unique) {
     const classification = classifier.classify(event);
     if (classification) {
+      registry.counter('corpaction_events_classified_total', 'Events classified', { action_type: classification.actionType });
       await redis.xadd(
         'corpaction:classified_events', '*',
         'source', event.sourceType,

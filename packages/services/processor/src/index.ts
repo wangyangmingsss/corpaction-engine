@@ -2,7 +2,7 @@ import { ethers } from 'ethers';
 import { Redis } from 'ioredis';
 import { Pool } from 'pg';
 import { Logger } from './utils/Logger';
-import { startMetricsServer } from './metrics';
+import { registry, startMetricsServer } from './metrics';
 import { EventDeduplicator } from './dedup/EventDeduplicator';
 import { EventClassifier } from './classifier/EventClassifier';
 import { ActionIntentBuilder, ClassifiedEvent } from './builder/ActionIntentBuilder';
@@ -153,6 +153,7 @@ async function main() {
             actionType: intent.actionType,
             targetToken: intent.targetToken,
           });
+          registry.counter('corpaction_intents_built_total', 'Intents built', { action_type: intent.actionType });
 
           // Stage 3b: Build Merkle tree for DIVIDEND and SPINOFF actions
           if (classification.actionType === 'DIVIDEND' || classification.actionType === 'SPINOFF') {
@@ -163,7 +164,10 @@ async function main() {
                   address: h.address,
                   amount: BigInt(h.amount),
                 }));
+                const merkleStart = Date.now();
                 const treeData = merkleTreeBuilder.buildTree(holderEntries);
+                const merkleElapsed = Date.now() - merkleStart;
+                registry.histogram('corpaction_merkle_tree_build_seconds', 'Merkle tree build time', merkleElapsed / 1000);
                 logger.info('Merkle tree built', {
                   intentId: intent.intentId,
                   root: treeData.root,
@@ -243,6 +247,7 @@ async function main() {
           if (submitter) {
             try {
               const txHash = await submitter.submitIntent(intent);
+              registry.counter('corpaction_chain_submissions_total', 'On-chain submissions');
               logger.info('Intent submitted on-chain', {
                 intentId: intent.intentId,
                 txHash,
@@ -255,6 +260,7 @@ async function main() {
                 'data', JSON.stringify(intent)
               );
             } catch (submitError) {
+              registry.counter('corpaction_chain_submission_errors_total', 'Submission errors');
               logger.error('On-chain submission failed', {
                 intentId: intent.intentId,
                 error: String(submitError),

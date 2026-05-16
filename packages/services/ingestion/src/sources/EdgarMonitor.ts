@@ -1,5 +1,6 @@
 import { ICorporateActionSource, RawCorporateActionEvent } from './ICorporateActionSource';
 import { Logger } from '../utils/Logger';
+import { registry } from '../metrics';
 import { Redis } from 'ioredis';
 import crypto from 'crypto';
 
@@ -48,6 +49,7 @@ export class EdgarMonitor implements ICorporateActionSource {
   }
 
   async poll(): Promise<RawCorporateActionEvent[]> {
+    const pollStart = Date.now();
     const events: RawCorporateActionEvent[] = [];
 
     // If RSS fallback is active, use the RSS feed instead of the API
@@ -85,6 +87,7 @@ export class EdgarMonitor implements ICorporateActionSource {
         }
       } catch (error) {
         this.consecutiveFailures++;
+        registry.counter('corpaction_edgar_failures_total', 'EDGAR API failures');
         this.logger.error(`Error fetching ${form} filings (failure ${this.consecutiveFailures}/${this.MAX_CONSECUTIVE_FAILURES})`, {
           error: String(error),
         });
@@ -105,8 +108,9 @@ export class EdgarMonitor implements ICorporateActionSource {
         }
       }
     }
+    const elapsed = Date.now() - pollStart;
+    registry.histogram('corpaction_edgar_poll_latency_seconds', 'EDGAR poll latency', elapsed / 1000);
     return events;
-  }
 
   async verify(eventId: string): Promise<{ verified: boolean; details: string }> {
     const accession = eventId.split(':')[1];

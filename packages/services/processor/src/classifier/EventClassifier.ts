@@ -56,6 +56,9 @@ export class EventClassifier {
     if (event.eventType === 'LIQUIDATION' || this.hasLiquidationSignals(event)) {
       return this.classifyLiquidation(event);
     }
+    if (event.eventType === 'TICKER_CHANGE' || this.hasTickerChangeSignals(event)) {
+      return this.classifyTickerChange(event);
+    }
     if (event.eventType === 'DELISTING') {
       return this.classifyDelisting(event);
     }
@@ -219,6 +222,9 @@ export class EventClassifier {
           if (this.hasSplitSignals(event)) {
             return this.classifySplit(event);
           }
+          if (this.hasTickerChangeSignals(event)) {
+            return this.classifyTickerChange(event);
+          }
           return {
             actionType: 'TICKER_CHANGE',
             confidence: 'LOW',
@@ -287,5 +293,52 @@ export class EventClassifier {
   private hasLiquidationSignals(event: RawCorporateActionEvent): boolean {
     const raw = JSON.stringify(event.rawData).toLowerCase();
     return raw.includes('liquidat') || raw.includes('dissolution') || raw.includes('wind down') || raw.includes('winding up');
+  }
+
+  private hasTickerChangeSignals(event: RawCorporateActionEvent): boolean {
+    const raw = JSON.stringify(event.rawData).toLowerCase();
+    return (
+      raw.includes('ticker change') ||
+      raw.includes('ticker symbol change') ||
+      raw.includes('name change') ||
+      raw.includes('new ticker') ||
+      raw.includes('symbol change') ||
+      raw.includes('cusip change') ||
+      (raw.includes('trading symbol') && raw.includes('chang'))
+    );
+  }
+
+  private classifyTickerChange(event: RawCorporateActionEvent): ClassificationResult {
+    const rawData = event.rawData;
+    const rawText = JSON.stringify(rawData).toLowerCase();
+
+    const signals: string[] = ['ticker_change'];
+    let confidence: ConfidenceLevel = 'MEDIUM';
+
+    // High confidence if we have both old and new ticker information
+    const hasOldTicker = !!(rawData.old_ticker || rawData.previous_ticker);
+    const hasNewTicker = !!(rawData.new_ticker || rawData.new_symbol);
+    if (hasOldTicker && hasNewTicker) {
+      confidence = 'HIGH';
+      signals.push('old_and_new_ticker_present');
+    } else if (rawText.includes('ticker symbol change') || rawText.includes('cusip change')) {
+      confidence = 'HIGH';
+      signals.push('explicit_ticker_change_language');
+    }
+
+    if (rawData.effective_date) {
+      signals.push('effective_date_present');
+    }
+
+    return {
+      actionType: 'TICKER_CHANGE',
+      confidence,
+      signals,
+      params: {
+        oldTicker: rawData.old_ticker || rawData.previous_ticker,
+        newTicker: rawData.new_ticker || rawData.new_symbol,
+        effectiveDate: rawData.effective_date,
+      },
+    };
   }
 }
