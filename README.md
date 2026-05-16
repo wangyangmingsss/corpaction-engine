@@ -66,7 +66,7 @@ SEC EDGAR / DTCC / Data APIs  -->  Ingestion Layer  -->  Normalization Engine
 
 | Contract | Purpose | Key Features |
 |----------|---------|-------------|
-| `ActionRegistry` | Central lifecycle registry (propose -> validate -> queue -> execute) | Fee/attestation integration, reverseAction(), queue expiration, intent TTL |
+| `ActionRegistry` | Central lifecycle registry (propose -> validate -> queue -> execute) | Fee/attestation integration, reverseAction(), TimelockController delegation, token mapping, queue expiration, intent TTL |
 | `ValidatorManager` | Validator set, signature verification, severity-based quorum | Dynamic validator management, EIP-191 signatures |
 | `TimelockController` | Mandatory delays per action type (1h-48h) | Configurable per action type |
 | `DividendDistributor` | Merkle-tree USDC pull distribution | Withholding tax (basis points), snapshotBlock tracking, claim deadlines |
@@ -74,17 +74,17 @@ SEC EDGAR / DTCC / Data APIs  -->  Ingestion Layer  -->  Normalization Engine
 | `MergerHandler` | Cash-only, stock-for-stock, hybrid mergers | Election mechanism, proration factor, cash pool validation, finalize |
 | `SpinoffExecutor` | New token distribution via Merkle claims | Claim deadlines, proof verification |
 | `DelistingManager` | 5-phase delisting process | Each phase transitions individually, dispute/rollback, claim deadline |
-| `TickerMigrator` | Symbol/address migration with balance snapshot | Merkle-based claim for new tokens |
-| `AttestationRegistry` | Cryptographic source attestation | Submit, verify, query attestations per intent |
+| `TickerMigrator` | Symbol/address migration with balance snapshot | Old token freeze, ActionRegistry token mapping update, Merkle-based claim |
+| `AttestationRegistry` | Cryptographic source attestation with EIP-712 typed data signing | Submit, verify, query attestations per intent |
 | `FeeCollector` | Per-action fee calculation and collection | Configurable schedule with caps |
 
 ## Testing
 
 Comprehensive testing suite with 100+ tests across 5 categories:
 
-### Unit Tests (9 files)
+### Unit Tests (11 files)
 Every contract has dedicated unit tests covering happy paths, revert conditions, edge cases, access control, and state transitions:
-- `ActionRegistry.t.sol` - Proposal, validation, execution, cancellation, emergency, timelock, TTL, routing, permissions
+- `ActionRegistry.t.sol` - Proposal, validation, execution, cancellation, reversal, emergency, timelock, TTL, routing, permissions
 - `ValidatorManager.t.sol` - Add/remove validators, quorum, signatures, super majority
 - `DividendDistributor.t.sol` - Execute, claim, withholding tax, double-claim, expiry, reclaim
 - `SplitExecutor.t.sol` - Forward/reverse splits, cash-in-lieu, multiplier verification
@@ -94,6 +94,8 @@ Every contract has dedicated unit tests covering happy paths, revert conditions,
 - `TickerMigrator.t.sol` - Execute, claim migration, proof verification
 - `FeeCollector.t.sol` - Fee calculation per type, caps, collection, permissions
 - `AttestationRegistry.t.sol` - Submit, verify, query, access control
+
+- `MultiplierMath.t.sol` - Arithmetic operations, rounding, edge cases
 
 ### Integration Tests (7 files)
 End-to-end scenarios exercising the full pipeline:
@@ -130,24 +132,26 @@ Real-world corporate action replays:
 | Source | Adapter | Reliability | Features |
 |--------|---------|------------|----------|
 | SEC EDGAR | `EdgarMonitor` | 95% | 8-K, 14A, S-4, SC TO-T, 25-NSE polling + RSS fallback on 3 consecutive failures |
-| DTCC ISO 20022 | `DtccFeedParser` | 98% | seev.031 corporate action notification parsing |
+| DTCC ISO 20022 | `DtccFeedParser` | 98% | seev.031 notifications, seev.039 cancellations, seev.044 reversals; Redis-backed dedup |
 | EOD Historical | `EodHistoricalAdapter` | 85% | Dividend history, stock split calendars |
-| Polygon.io | `PolygonAdapter` | 85% | Real-time corporate action events |
+| Polygon.io | `PolygonAdapter` | 85% | Real-time corporate action events via REST + WebSocket subscription |
 | Alpha Vantage | `AlphaVantageAdapter` | 75% | Fallback cross-validation source |
 | Bloomberg/Refinitiv | `BloombergAdapter` | 99% | Enterprise-grade DTCC feeds (stub) |
 
 ### Event Processing Pipeline
 ```
-Raw Events -> EventDeduplicator (ISIN fallback, parameter comparison, confidence promotion)
-           -> EventClassifier (8-K item-level parsing, SC TO-T, LIQUIDATION)
-           -> ActionIntentBuilder (ERC-8056 multiplier pre-calc, overflow protection)
-           -> OnChainSubmitter (with error recovery and gas retry)
+Raw Events -> EventDeduplicator (ISIN fallback, effectiveDate composite key, multi-source confidence)
+           -> EventClassifier (8-K item-level parsing, SC TO-T, LIQUIDATION, explicit TICKER_CHANGE)
+           -> ActionIntentBuilder (ABI encoding for all 10 action types, USDC 6-decimal normalization, ERC-8056 multiplier pre-calc)
+           -> MerkleTreeBuilder (distribution trees for DIVIDEND/SPINOFF)
+           -> OnChainSubmitter (with ErrorRecovery integration and gas retry)
 ```
 
 ### Validator Node
 - On-chain `ActionProposed` event listening via ethers
 - Multi-validator coordination via Redis pub/sub
-- Independent source verification via `SourceVerifier`
+- Independent source verification via `SourceVerifier` (generic `verify()` dispatching by action type)
+- ECDSA/EIP-712 signing via `SigningService` integration
 - Conflict resolution with Redis-based workflow
 
 ### Error Recovery
@@ -198,8 +202,8 @@ await client.claimOnBehalf(intentId, holderAddress, amount, proof, signer);
 ```
 
 ### SDK Features
-- 10 granular event subscription methods (ActionValidated, ActionQueued, ActionCancelled, ActionFailed, DividendClaimed, SplitExecuted, MergerExecuted, DelistingInitiated, SpinoffDistributed, TickerMigrated)
-- `decodeActionParams()` for typed parameter decoding per action type
+- 12 granular event subscription methods (ActionValidated, ActionQueued, ActionCancelled, ActionFailed, DividendClaimed, SplitExecuted, MergerExecuted, DelistingInitiated, SpinoffDistributed, TickerMigrated, EmergencyPaused, EmergencyResumed)
+- `decodeActionParams()` for typed parameter decoding per action type (all 10 types including LIQUIDATION)
 - `claimOnBehalf()` for batch proxy claims
 - `getStrikePriceAdjustment()` for derivatives
 - Custom error types (`CorpActionError`, `RPCError`, `ContractError`)
@@ -237,7 +241,7 @@ PostgreSQL 16 with 11 tables:
 - Validator quorum below minimum
 
 ### Grafana Dashboard
-Full operational dashboard with event ingestion rates, classification confidence, execution latency, validator health, TX failure rates, gas price tracking.
+Full operational dashboard with 11 panels: event ingestion rates, events by source, classification confidence, execution latency, validator health, TX failure rates, gas price tracking, EDGAR poll latency, Unclaimed Dividend Ratio, Contract Balance, and Merkle Tree Construction Time. Auto-provisioned Prometheus datasource.
 
 ### Structured Logging
 All services use structured JSON logging with timestamp, level, service, component, event, and trace_id fields.
@@ -307,7 +311,7 @@ corpaction-engine/
 │   │   │   ├── fuzz/           # MultiplierMath fuzz tests
 │   │   │   ├── invariant/      # 5 invariant property tests
 │   │   │   ├── scenarios/      # 5 real-world replay tests
-│   │   │   └── mocks/          # MockERC20, MockERC8056, MockValidatorManager
+│   │   │   └── mocks/          # MockERC20, MockERC8056, MockValidatorManager, MockAttestationRegistry, MockFeeCollector
 │   │   └── script/             # Deploy, ConfigureValidators, RegisterExecutors
 │   ├── services/
 │   │   ├── ingestion/          # SEC EDGAR + DTCC + financial data monitoring
@@ -326,11 +330,11 @@ corpaction-engine/
 │   └── sdk/                    # TypeScript SDK (10 event subscriptions, typed params, retry)
 ├── monitoring/
 │   ├── prometheus.yml          # Scrape config with rules reference
-│   ├── prometheus.rules.yml    # 10 alert rules
-│   └── dashboards/             # Grafana dashboard with proper datasource config
+│   ├── prometheus.rules.yml    # 10 alert rules (mounted in docker-compose)
+│   └── dashboards/             # Grafana dashboard (11 panels) + datasource provisioning
 ├── docs/                       # Architecture, API reference, security model, integration guide
-├── .github/workflows/          # contracts-ci, services-ci, integration-tests, deploy-testnet, security-audit
-├── docker-compose.yml          # Production stack (Postgres, Redis, 3 services, Prometheus, Grafana)
+├── .github/workflows/          # contracts-ci (+ Slither), services-ci, integration-tests, deploy-testnet, security-audit
+├── docker-compose.yml          # Production stack (Postgres, Redis, 3 services, Prometheus, Grafana, postgres-exporter, redis-exporter)
 └── Makefile                    # Build automation
 ```
 
@@ -344,7 +348,7 @@ corpaction-engine/
 - **Queue expiration:** QUEUED actions expire after configurable TTL (default 7 days)
 - **Emergency circuit breaker:** Any single validator can pause all operations; resume requires supermajority (4-of-5)
 - **Action reversal:** EXECUTED actions can be reversed with 5-of-5 (all validators) consensus
-- **Source attestation:** Cryptographic proof linking on-chain actions to SEC filings, verified before execution
+- **Source attestation:** Cryptographic proof with EIP-712 typed data signing, linking on-chain actions to SEC filings
 - **Fee integration:** Fees collected and validated before action execution
 - **Dispute mechanism:** Validators can dispute delistings, triggering pause and potential rollback
 - **UUPS proxy upgrades:** 72h time-lock with 4-of-5 validator approval
