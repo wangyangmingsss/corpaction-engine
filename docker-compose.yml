@@ -39,6 +39,9 @@ services:
       EDGAR_USER_AGENT: ${EDGAR_USER_AGENT:-CorpActionEngine/1.0}
       EOD_API_KEY: ${EOD_API_KEY:-}
       POLYGON_API_KEY: ${POLYGON_API_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      AI_MODEL: ${AI_MODEL:-claude-sonnet-4-20250514}
+      AI_MAX_TOKENS: ${AI_MAX_TOKENS:-1024}
     restart: unless-stopped
 
   processor:

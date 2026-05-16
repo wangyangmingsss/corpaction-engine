@@ -35,3 +35,27 @@ Thank you for your interest in contributing to CorpAction Engine.
 
 If you discover a security vulnerability, please report it privately.
 See [SECURITY.md](SECURITY.md) for details.
+
+## Join the Team
+
+CorpAction Engine is building the infrastructure layer for tokenized equity lifecycle management. If you're interested in contributing beyond code, we're looking for:
+
+### Areas of Need
+
+| Area | Skills | Priority |
+|------|--------|----------|
+| **Smart Contract Security** | Solidity, formal verification, Slither/Mythril | High |
+| **Cross-Chain Engineering** | LayerZero, Chainlink CCIP, bridge protocols | High |
+| **DeFi Integration** | GMX, Uniswap V3, Aave, lending protocol mechanics | Medium |
+| **DevRel / Documentation** | Technical writing, tutorial creation | Medium |
+| **Frontend / Dashboard** | React, Next.js, ethers.js, data visualization | Medium |
+
+### How to Get Involved
+
+1. **Pick an open issue**: Check [Issues](https://github.com/wangyangmingsss/corpaction-engine/issues) for `good-first-issue` or `help-wanted` labels
+2. **Join the discussion**: Comment on issues you're interested in before starting work
+3. **Propose new ideas**: Open a feature request if you see an opportunity we've missed
+
+### Buildathon → Founder House Pipeline
+
+Top contributors during the Buildathon phase (May 25 - Jun 14, 2026) will be considered for the London Founder House cohort (Jul 10-12, 2026). This is a direct path from open-source contribution to startup co-founding.
