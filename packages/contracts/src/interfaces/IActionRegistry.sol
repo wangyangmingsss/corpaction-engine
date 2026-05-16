@@ -35,4 +35,26 @@ interface IActionRegistry {
         address oldToken,
         address newToken
     ) external;
+
+    function queueAction(bytes32 intentId) external;
+
+    function reverseAction(bytes32 intentId, string calldata reason, bytes[] calldata signatures) external;
+
+    function expireAction(bytes32 intentId) external;
+
+    function emergencyPause() external;
+
+    function emergencyResume(bytes[] calldata signatures) external;
+
+    function registerExecutor(ICorpActionTypes.ActionType actionType, address executor) external;
+
+    function setTimelock(ICorpActionTypes.ActionType actionType, uint256 duration) external;
+
+    function setFeeCollector(address _feeCollector) external;
+
+    function setAttestationRegistry(address _attestationRegistry) external;
+
+    function setQueuedTTL(uint256 _queuedTTL) external;
+
+    function setTimelockController(address _timelockController) external;
 }

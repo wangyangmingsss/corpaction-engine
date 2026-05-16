@@ -1,5 +1,19 @@
 -- CorpAction Engine Database Schema
 -- PostgreSQL 16+
+--
+-- Core Tables (per documentation Section 6.1):
+--   raw_events           - Raw corporate action events from external sources
+--   corporate_actions    - Deduplicated and classified corporate actions
+--   event_sources        - Links raw events to corporate actions (many-to-many)
+--   merkle_trees         - Merkle trees for dividend/spinoff distributions
+--   merkle_leaves        - Individual holder entitlements with proofs
+--   execution_log        - On-chain execution audit trail
+--
+-- Extended Tables (implementation additions):
+--   validator_attestations - Validator signature records for audit trail
+--   fee_tracking           - Per-action fee collection records
+--   token_registry         - Ticker-to-address mapping for on-chain tokens
+--   holder_snapshots       - Balance snapshots at record dates for distributions
 
 -- Core types
 CREATE TYPE source_type AS ENUM (

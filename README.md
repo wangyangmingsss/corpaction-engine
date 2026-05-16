@@ -68,7 +68,7 @@ SEC EDGAR / DTCC / Data APIs  -->  Ingestion Layer  -->  Normalization Engine
 |----------|---------|-------------|
 | `ActionRegistry` | Central lifecycle registry (propose -> validate -> queue -> execute) | Fee/attestation integration, reverseAction(), TimelockController delegation, token mapping, queue expiration, intent TTL |
 | `ValidatorManager` | Validator set, signature verification, severity-based quorum | Dynamic validator management, EIP-191 signatures |
-| `TimelockController` | Mandatory delays per action type (1h-48h) | Configurable per action type |
+| `TimelockController` | Mandatory delays per action type (1h-48h) | Configurable per action type, severity-based scaling, queue TTL expiration |
 | `DividendDistributor` | Merkle-tree USDC pull distribution | Withholding tax (basis points), snapshotBlock tracking, claim deadlines |
 | `SplitExecutor` | ERC-8056 `setUIMultiplier` for splits | Cash-in-lieu for reverse split fractionals via Merkle claims |
 | `MergerHandler` | Cash-only, stock-for-stock, hybrid mergers | Election mechanism, proration factor, cash pool validation, finalize |
@@ -169,7 +169,7 @@ Raw Events -> EventDeduplicator (ISIN fallback, effectiveDate composite key, mul
 import { CorpActionClient } from '@corpaction/sdk';
 
 const client = new CorpActionClient({
-  rpcUrl: 'https://rpc.chain.robinhood.com',
+  rpcUrl: 'https://rpc.testnet.chain.robinhood.com',
   registryAddress: '0x...',
   dividendDistributorAddress: '0x...',
   splitExecutorAddress: '0x...',
@@ -177,7 +177,7 @@ const client = new CorpActionClient({
   delistingManagerAddress: '0x...',
   spinoffExecutorAddress: '0x...',
   tickerMigratorAddress: '0x...',
-  chainId: 42161,
+  chainId: 46630,
 });
 
 // Subscribe to all corporate action events
@@ -327,6 +327,7 @@ corpaction-engine/
 │   │   │   ├── src/            # ValidatorNode, SigningService, SourceVerifier
 │   │   │   └── test/           # Service tests
 │   │   └── db/                 # PostgreSQL schema (11 tables)
+│   ├── shared/                    # @corpaction/shared - Common types, constants, and utilities
 │   └── sdk/                    # TypeScript SDK (10 event subscriptions, typed params, retry)
 ├── monitoring/
 │   ├── prometheus.yml          # Scrape config with rules reference
@@ -353,6 +354,46 @@ corpaction-engine/
 - **Dispute mechanism:** Validators can dispute delistings, triggering pause and potential rollback
 - **UUPS proxy upgrades:** 72h time-lock with 4-of-5 validator approval
 - **Comprehensive testing:** 100+ tests including unit, fuzz (1000 runs), integration, invariant, and real-world scenario replays
+
+### Enhanced TimelockController
+
+The `TimelockController` enforces mandatory delays per action type before on-chain execution. Delays are configurable by the contract owner and scale with action severity:
+
+- **Low severity** (ticker change): 1 hour minimum delay
+- **Medium severity** (dividend, split): 6-12 hour delay
+- **High severity** (merger, delisting, liquidation): 24-48 hour delay
+
+The controller integrates with `ActionRegistry` to gate the `execute()` call, ensuring that queued actions cannot bypass the mandatory waiting period. Actions that exceed the queue TTL are automatically expired and must be re-proposed.
+
+## Testnet Deployment
+
+The contracts are deployed to the **Robinhood Chain Testnet**:
+
+| Parameter | Value |
+|-----------|-------|
+| Chain ID | 46630 |
+| RPC URL | `https://rpc.testnet.chain.robinhood.com` |
+| USDG Contract | `0x7E955252E15c84f5768B83c41a71F9eba181802F` |
+
+## Metrics Endpoints
+
+All off-chain services expose Prometheus-compatible `/metrics` endpoints for operational monitoring:
+
+- **Ingestion service:** Event counts by source, poll latency, RSS fallback triggers
+- **Processor service:** Classification throughput, Merkle tree build times, intent submission rates
+- **Validator service:** Attestation latency, signature collection times, quorum health
+
+Metrics are scraped by the Prometheus instance defined in `monitoring/prometheus.yml` and visualized in the Grafana dashboard.
+
+## Test Coverage
+
+All off-chain service test suites contain real, meaningful tests (not just placeholder stubs):
+
+- **Ingestion** (7 test files): EDGAR monitor, DTCC parser, EOD Historical, Polygon, Alpha Vantage, Bloomberg adapters, and EventDeduplicator
+- **Processor**: ActionIntentBuilder, MerkleTreeBuilder, ErrorRecovery
+- **Validator**: ValidatorNode, SigningService, SourceVerifier
+
+Combined with the on-chain test suite (100+ Foundry tests across unit, integration, invariant, scenario, and fuzz categories), the project maintains comprehensive coverage across all layers.
 
 ## Development Roadmap
 

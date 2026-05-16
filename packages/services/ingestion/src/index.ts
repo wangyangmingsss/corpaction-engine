@@ -55,7 +55,10 @@ async function main() {
   const allEvents: RawCorporateActionEvent[] = [];
   for (const source of sources) {
     try {
+      const pollStart = Date.now();
       const events = await source.poll();
+      const pollElapsed = (Date.now() - pollStart) / 1000;
+      registry.histogram('corpaction_source_poll_latency_seconds', 'Source poll latency', pollElapsed, { source: source.name });
       allEvents.push(...events);
       registry.counter('corpaction_events_ingested_total', 'Total events ingested', { source: source.name });
       logger.info(`Polled ${events.length} events from ${source.name}`);

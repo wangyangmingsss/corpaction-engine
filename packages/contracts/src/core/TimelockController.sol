@@ -14,10 +14,15 @@ contract TimelockController is
 {
     bytes32 public constant ADMIN_ROLE = keccak256("ADMIN_ROLE");
     bytes32 public constant UPGRADER_ROLE = keccak256("UPGRADER_ROLE");
+    bytes32 public constant SCHEDULER_ROLE = keccak256("SCHEDULER_ROLE");
 
     mapping(ActionType => uint256) public timelocks;
+    mapping(bytes32 => uint256) private _scheduledTimes;
 
     event TimelockSet(ActionType indexed actionType, uint256 duration);
+    event ExecutionScheduled(bytes32 indexed intentId, ActionType indexed actionType, uint256 readyAt);
+    event ExecutionCancelled(bytes32 indexed intentId);
+    event ExecutionReady(bytes32 indexed intentId);
 
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() { _disableInitializers(); }
@@ -28,6 +33,7 @@ contract TimelockController is
 
         _grantRole(DEFAULT_ADMIN_ROLE, msg.sender);
         _grantRole(ADMIN_ROLE, msg.sender);
+        _grantRole(SCHEDULER_ROLE, msg.sender);
         _grantRole(UPGRADER_ROLE, msg.sender);
 
         // Default timelocks from the spec
@@ -53,6 +59,31 @@ contract TimelockController is
 
     function getTimelock(ActionType actionType) external view returns (uint256) {
         return timelocks[actionType];
+    }
+
+    function scheduleExecution(
+        bytes32 intentId,
+        ActionType actionType
+    ) external onlyRole(SCHEDULER_ROLE) {
+        require(_scheduledTimes[intentId] == 0, "Already scheduled");
+        uint256 readyAt = block.timestamp + timelocks[actionType];
+        _scheduledTimes[intentId] = readyAt;
+        emit ExecutionScheduled(intentId, actionType, readyAt);
+    }
+
+    function isReady(bytes32 intentId) external view returns (bool) {
+        uint256 scheduled = _scheduledTimes[intentId];
+        return scheduled != 0 && block.timestamp >= scheduled;
+    }
+
+    function cancelScheduled(bytes32 intentId) external onlyRole(SCHEDULER_ROLE) {
+        require(_scheduledTimes[intentId] != 0, "Not scheduled");
+        delete _scheduledTimes[intentId];
+        emit ExecutionCancelled(intentId);
+    }
+
+    function getScheduledTime(bytes32 intentId) external view returns (uint256) {
+        return _scheduledTimes[intentId];
     }
 
     function _authorizeUpgrade(address) internal override onlyRole(UPGRADER_ROLE) {}

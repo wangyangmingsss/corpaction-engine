@@ -259,6 +259,7 @@ export class ValidatorNode {
       try {
         const result = await verifier.verify(intentId, actionType, actionParams);
         results.push(result);
+        registry.counter('corpaction_source_verifications_total', 'Source verifications', { result: result.verified ? 'success' : 'failure' });
       } catch (error) {
         results.push({ verified: false, details: `Verifier error: ${String(error)}` });
       }

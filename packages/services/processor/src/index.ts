@@ -83,6 +83,8 @@ async function main() {
 
         if (rawEvents.length === 0) continue;
 
+        registry.gauge('corpaction_processor_events_pending', 'Pending events in queue', rawEvents.length);
+
         // --- Pipeline Stage 1: Dedup ---
         const dedupResult = deduplicator.deduplicate(rawEvents);
         logger.info('Deduplication complete', {

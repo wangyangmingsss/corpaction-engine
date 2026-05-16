@@ -16,6 +16,7 @@ import {ICorpActionTypes} from "../interfaces/ICorpActionTypes.sol";
 import {IAttestationRegistry} from "../interfaces/IAttestationRegistry.sol";
 import {IFeeCollector} from "../interfaces/IFeeCollector.sol";
 import {TimelockController} from "./TimelockController.sol";
+import {ActionLib} from "../libraries/ActionLib.sol";
 
 contract ActionRegistry is
     IActionRegistry,
@@ -296,14 +297,7 @@ contract ActionRegistry is
         string calldata reason
     ) external {
         ActionIntent storage intent = _getIntent(intentId);
-        require(
-            intent.state == ActionState.PROPOSED ||
-            intent.state == ActionState.VALIDATED ||
-            intent.state == ActionState.QUEUED ||
-            intent.state == ActionState.FAILED ||
-            intent.state == ActionState.PAUSED,
-            "Cannot cancel in current state"
-        );
+        require(ActionLib.isCancellableState(intent.state), "Cannot cancel in current state");
         require(validatorManager.isValidator(msg.sender), "Not a validator");
 
         intent.state = ActionState.CANCELLED;
