@@ -143,8 +143,34 @@ export class EdgarMonitor implements ICorporateActionSource {
 
   private isMarketHours(): boolean {
     const now = new Date();
-    const etHour = now.getUTCHours() - 4;
+    const utcOffset = this.isEasternDST(now) ? -4 : -5;
+    const etHour = now.getUTCHours() + utcOffset;
     return etHour >= 9 && etHour <= 18;
+  }
+
+  /**
+   * Determines if a given date falls within US Eastern Daylight Time.
+   * DST runs from the second Sunday of March at 2:00 AM to the
+   * first Sunday of November at 2:00 AM.
+   */
+  private isEasternDST(date: Date): boolean {
+    const year = date.getUTCFullYear();
+
+    // Second Sunday of March: find March 1, advance to second Sunday
+    const march1 = new Date(Date.UTC(year, 2, 1));
+    const march1Day = march1.getUTCDay();
+    const secondSundayMarch = 1 + ((7 - march1Day) % 7) + 7;
+    // DST starts at 2:00 AM EST = 07:00 UTC
+    const dstStart = new Date(Date.UTC(year, 2, secondSundayMarch, 7, 0, 0));
+
+    // First Sunday of November: find Nov 1, advance to first Sunday
+    const nov1 = new Date(Date.UTC(year, 10, 1));
+    const nov1Day = nov1.getUTCDay();
+    const firstSundayNov = 1 + ((7 - nov1Day) % 7);
+    // DST ends at 2:00 AM EDT = 06:00 UTC
+    const dstEnd = new Date(Date.UTC(year, 10, firstSundayNov, 6, 0, 0));
+
+    return date >= dstStart && date < dstEnd;
   }
 
   private async fetchRecentFilings(form: string): Promise<EdgarFiling[]> {
@@ -293,7 +319,26 @@ export class EdgarMonitor implements ICorporateActionSource {
         headers: { 'User-Agent': process.env.EDGAR_USER_AGENT || 'CorpActionEngine/1.0' },
       });
       if (!response.ok) return null;
-      return { accessionNumber: accession } as EdgarFiling;
+
+      const text = await response.text();
+
+      const filingType = this.extractXmlTag(text, 'form-type') || this.extractXmlTag(text, 'type') || '';
+      const filedDate = this.extractXmlTag(text, 'filing-date') || this.extractXmlTag(text, 'updated') || '';
+      const companyName = this.extractXmlTag(text, 'company-name') || this.extractXmlTag(text, 'title') || '';
+      const cik = this.extractXmlTag(text, 'cik') || '';
+      const ticker = this.extractXmlTag(text, 'ticker-symbol') || '';
+      const link = this.extractXmlAttr(text, 'link', 'href');
+      const fileUrl = link || `https://www.sec.gov/Archives/edgar/data/${cik}/${accession}`;
+
+      return {
+        accessionNumber: accession,
+        filingDate: filedDate,
+        form: filingType,
+        fileUrl,
+        companyName,
+        cik,
+        ticker,
+      };
     } catch {
       return null;
     }

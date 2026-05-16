@@ -1,10 +1,23 @@
+import { randomUUID } from 'crypto';
+
 export class Logger {
   private service: string;
   private component: string;
+  private _traceId: string;
 
   constructor(service: string, component: string) {
     this.service = service;
     this.component = component;
+    this._traceId = randomUUID();
+  }
+
+  /** Set a new trace ID for each request/event processing cycle */
+  setTraceId(traceId?: string): void {
+    this._traceId = traceId ?? randomUUID();
+  }
+
+  get traceId(): string {
+    return this._traceId;
   }
 
   info(message: string, meta?: Record<string, unknown>): void {
@@ -29,7 +42,8 @@ export class Logger {
       level,
       service: this.service,
       component: this.component,
-      message,
+      trace_id: this._traceId,
+      event: message,
       ...meta,
     };
     console.log(JSON.stringify(entry));

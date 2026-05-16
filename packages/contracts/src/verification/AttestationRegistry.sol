@@ -7,11 +7,14 @@ import {UUPSUpgradeable} from
     "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import {AccessControlUpgradeable} from
     "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol";
+import {EIP712Upgradeable} from
+    "@openzeppelin/contracts-upgradeable/utils/cryptography/EIP712Upgradeable.sol";
 import {IAttestationRegistry} from "../interfaces/IAttestationRegistry.sol";
 
 contract AttestationRegistry is
     IAttestationRegistry,
     AccessControlUpgradeable,
+    EIP712Upgradeable,
     UUPSUpgradeable
 {
     using ECDSA for bytes32;
@@ -19,6 +22,10 @@ contract AttestationRegistry is
 
     bytes32 public constant ATTESTER_ROLE = keccak256("ATTESTER_ROLE");
     bytes32 public constant UPGRADER_ROLE = keccak256("UPGRADER_ROLE");
+
+    bytes32 public constant ATTESTATION_TYPEHASH = keccak256(
+        "Attestation(bytes32 intentId,string sourceType,string sourceId,string sourceUrl,bytes32 contentHash,uint256 ingestedAt)"
+    );
 
     struct Attestation {
         bytes32 intentId;
@@ -42,16 +49,37 @@ contract AttestationRegistry is
 
     error AttestationAlreadyExists(bytes32 attestationId);
     error AttestationNotFound(bytes32 attestationId);
+    error InvalidSignature();
 
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() { _disableInitializers(); }
 
     function initialize() external initializer {
         __AccessControl_init();
+        __EIP712_init("CorpActionAttestationRegistry", "1");
         __UUPSUpgradeable_init();
         _grantRole(DEFAULT_ADMIN_ROLE, msg.sender);
         _grantRole(ATTESTER_ROLE, msg.sender);
         _grantRole(UPGRADER_ROLE, msg.sender);
+    }
+
+    function hashAttestation(
+        bytes32 intentId,
+        string calldata sourceType,
+        string calldata sourceId,
+        string calldata sourceUrl,
+        bytes32 contentHash,
+        uint256 ingestedAt
+    ) public view returns (bytes32) {
+        return _hashTypedDataV4(keccak256(abi.encode(
+            ATTESTATION_TYPEHASH,
+            intentId,
+            keccak256(bytes(sourceType)),
+            keccak256(bytes(sourceId)),
+            keccak256(bytes(sourceUrl)),
+            contentHash,
+            ingestedAt
+        )));
     }
 
     function submitAttestation(
@@ -69,6 +97,13 @@ contract AttestationRegistry is
 
         if (attestations[attestationId].blockNumber != 0)
             revert AttestationAlreadyExists(attestationId);
+
+        // Verify EIP-712 typed data signature
+        bytes32 digest = hashAttestation(
+            intentId, sourceType, sourceId, sourceUrl, contentHash, ingestedAt
+        );
+        address signer = ECDSA.recover(digest, signature);
+        if (signer != msg.sender) revert InvalidSignature();
 
         attestations[attestationId] = Attestation({
             intentId: intentId,

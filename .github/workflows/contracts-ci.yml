@@ -21,6 +21,17 @@ jobs:
       - name: Coverage
         run: cd packages/contracts && forge coverage --report lcov
 
+  slither-analysis:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { submodules: recursive }
+      - uses: foundry-rs/foundry-toolchain@v1
+      - name: Install Slither
+        run: pip3 install slither-analyzer
+      - name: Run Slither
+        run: cd packages/contracts && slither . --fail-on high
+
   gas-report:
     runs-on: ubuntu-latest
     steps:

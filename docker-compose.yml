@@ -79,10 +79,11 @@ services:
   grafana:
     image: grafana/grafana:latest
     depends_on: [prometheus]
-    ports: ['3001:3000']
+    ports: ['3000:3000']
     volumes:
       - grafana_data:/var/lib/grafana
       - ./monitoring/dashboards:/etc/grafana/provisioning/dashboards
+      - ./monitoring/grafana/provisioning/datasources:/etc/grafana/provisioning/datasources
 
   postgres-exporter:
     image: prometheuscommunity/postgres-exporter:latest

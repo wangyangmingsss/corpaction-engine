@@ -1,5 +1,6 @@
 import { ICorporateActionSource, RawCorporateActionEvent, VerificationResult } from './ICorporateActionSource';
 import { Logger } from '../utils/Logger';
+import { Redis } from 'ioredis';
 import crypto from 'crypto';
 
 // DTCC event type to internal event type mapping
@@ -61,12 +62,14 @@ export class DtccFeedParser implements ICorporateActionSource {
   readonly reliability = 98;
 
   private logger: Logger;
+  private redis: Redis;
   private feedUrl: string;
   private apiKey: string;
-  private processedIds: Set<string> = new Set();
+  private readonly PROCESSED_SET_KEY = 'dtcc:processed';
 
-  constructor(logger: Logger, feedUrl?: string, apiKey?: string) {
+  constructor(logger: Logger, redis: Redis, feedUrl?: string, apiKey?: string) {
     this.logger = logger;
+    this.redis = redis;
     this.feedUrl = feedUrl || process.env.DTCC_FEED_URL || 'https://api.dtcc.com/corpactions/v1/notifications';
     this.apiKey = apiKey || process.env.DTCC_API_KEY || '';
   }
@@ -79,12 +82,15 @@ export class DtccFeedParser implements ICorporateActionSource {
 
       for (const notification of notifications) {
         const eventId = notification.corporateActionGeneralInformation?.corporateActionEventIdentification;
-        if (!eventId || this.processedIds.has(eventId)) continue;
+        if (!eventId) continue;
+
+        const alreadyProcessed = await this.redis.sismember(this.PROCESSED_SET_KEY, eventId);
+        if (alreadyProcessed) continue;
 
         const event = this.parseNotification(notification);
         if (event) {
           events.push(event);
-          this.processedIds.add(eventId);
+          await this.redis.sadd(this.PROCESSED_SET_KEY, eventId);
         }
       }
 
@@ -117,16 +123,45 @@ export class DtccFeedParser implements ICorporateActionSource {
   }
 
   private async fetchNotifications(): Promise<Seev031Notification[]> {
+    const notifications: Seev031Notification[] = [];
+
+    // Fetch seev.031 notifications (standard corporate action notifications)
+    const seev031 = await this.fetchByMessageType('ISO20022-seev.031');
+    notifications.push(...seev031);
+
+    // Fetch seev.039 cancellation notifications
+    const seev039 = await this.fetchByMessageType('ISO20022-seev.039');
+    for (const notification of seev039) {
+      // Mark cancellations with a processing type so downstream can handle them
+      if (notification.corporateActionGeneralInformation) {
+        notification.corporateActionGeneralInformation.eventProcessingType = 'CANCELLATION';
+      }
+      notifications.push(notification);
+    }
+
+    // Fetch seev.044 reversal notifications
+    const seev044 = await this.fetchByMessageType('ISO20022-seev.044');
+    for (const notification of seev044) {
+      if (notification.corporateActionGeneralInformation) {
+        notification.corporateActionGeneralInformation.eventProcessingType = 'REVERSAL';
+      }
+      notifications.push(notification);
+    }
+
+    return notifications;
+  }
+
+  private async fetchByMessageType(messageType: string): Promise<Seev031Notification[]> {
     const response = await fetch(this.feedUrl, {
       headers: {
         'Authorization': `Bearer ${this.apiKey}`,
         'Accept': 'application/json',
-        'X-DTCC-Format': 'ISO20022-seev.031',
+        'X-DTCC-Format': messageType,
       },
     });
 
     if (!response.ok) {
-      throw new Error(`DTCC API error: ${response.status} ${response.statusText}`);
+      throw new Error(`DTCC API error (${messageType}): ${response.status} ${response.statusText}`);
     }
 
     const data = await response.json() as { notifications?: Seev031Notification[] };
