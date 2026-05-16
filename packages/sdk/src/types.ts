@@ -59,44 +59,77 @@ export interface PendingActionFilter {
 
 export interface DividendParams {
   paymentToken: string;
-  amountPerShare: bigint;
   totalAmount: bigint;
+  amountPerShare: bigint;
   merkleRoot: string;
   snapshotBlock: bigint;
+  claimDeadline: bigint;
+  withholding: boolean;
+  withholdingBps: bigint;
 }
 
 export interface SplitParams {
   numerator: bigint;
   denominator: bigint;
-  adjustDerivatives: boolean;
+  isReverse: boolean;
+  expectedNewMultiplier: bigint;
+  fractionalHandling: bigint;
+  cashInLieuToken: string;
+  cashInLieuPrice: bigint;
 }
 
 export interface MergerParams {
-  acquirerToken: string;
+  mergerType: number;
+  acquiringToken: string;
+  exchangeRatioNum: bigint;
+  exchangeRatioDen: bigint;
   cashPerShare: bigint;
-  stockRatio: bigint;
-  totalConsideration: bigint;
+  cashToken: string;
+  electionDeadline: bigint;
+  hasElection: boolean;
+  prorationFactor: bigint;
+  merkleRoot: string;
+  totalCashPool: bigint;
 }
 
 export interface DelistingParams {
-  reason: string;
+  announcementTime: bigint;
+  sellOnlyTime: bigint;
+  priceLockTime: bigint;
   finalPrice: bigint;
-  buybackDeadline: bigint;
-  custodianAddress: string;
+  settlementToken: string;
+  merkleRoot: string;
+  totalPool: bigint;
+  claimDeadline: bigint;
 }
 
 export interface SpinoffParams {
   newToken: string;
-  distributionRatio: bigint;
+  distributionRatioNum: bigint;
+  distributionRatioDen: bigint;
   merkleRoot: string;
   snapshotBlock: bigint;
+  claimDeadline: bigint;
 }
 
 export interface TickerChangeParams {
-  oldTicker: string;
+  newToken: string;
   newTicker: string;
-  newTokenAddress: string;
-  migrationDeadline: bigint;
+  newName: string;
+  merkleRoot: string;
+  snapshotBlock: bigint;
+  claimDeadline: bigint;
+}
+
+export interface LiquidationParams {
+  announcementTime: bigint;
+  sellOnlyTime: bigint;
+  priceLockTime: bigint;
+  finalPrice: bigint;
+  settlementToken: string;
+  merkleRoot: string;
+  totalPool: bigint;
+  claimDeadline: bigint;
 }
 
 export type DecodedActionParams =
@@ -105,7 +138,8 @@ export type DecodedActionParams =
   | MergerParams
   | DelistingParams
   | SpinoffParams
-  | TickerChangeParams;
+  | TickerChangeParams
+  | LiquidationParams;
 
 // ========== ERROR TYPES ==========
 

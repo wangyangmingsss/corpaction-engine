@@ -7,8 +7,10 @@ import {UUPSUpgradeable} from
     "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import {AccessControlUpgradeable} from
     "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol";
+import {IAttestationRegistry} from "../interfaces/IAttestationRegistry.sol";
 
 contract AttestationRegistry is
+    IAttestationRegistry,
     AccessControlUpgradeable,
     UUPSUpgradeable
 {
@@ -91,6 +93,10 @@ contract AttestationRegistry is
         if (att.blockNumber == 0) revert AttestationNotFound(attestationId);
         att.verified = true;
         emit AttestationVerified(attestationId, msg.sender);
+    }
+
+    function isVerified(bytes32 attestationId) external view returns (bool) {
+        return attestations[attestationId].verified;
     }
 
     function getAttestationsForIntent(bytes32 intentId)

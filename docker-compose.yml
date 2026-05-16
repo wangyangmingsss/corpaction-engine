@@ -73,6 +73,7 @@ services:
     image: prom/prometheus:latest
     volumes:
       - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
+      - ./monitoring/prometheus.rules.yml:/etc/prometheus/prometheus.rules.yml
     ports: ['9090:9090']
 
   grafana:
@@ -82,6 +83,22 @@ services:
     volumes:
       - grafana_data:/var/lib/grafana
       - ./monitoring/dashboards:/etc/grafana/provisioning/dashboards
+
+  postgres-exporter:
+    image: prometheuscommunity/postgres-exporter:latest
+    environment:
+      DATA_SOURCE_NAME: "postgresql://corpaction:${DB_PASSWORD:-corpaction_dev}@postgres:5432/corpaction?sslmode=disable"
+    depends_on:
+      postgres: { condition: service_healthy }
+    ports: ['9187:9187']
+
+  redis-exporter:
+    image: oliver006/redis_exporter:latest
+    environment:
+      REDIS_ADDR: redis://redis:6379
+    depends_on:
+      redis: { condition: service_healthy }
+    ports: ['9121:9121']
 
 volumes:
   postgres_data:

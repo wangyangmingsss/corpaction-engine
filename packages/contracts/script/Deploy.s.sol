@@ -64,6 +64,10 @@ contract Deploy is Script {
         ActionRegistry registry = ActionRegistry(address(regProxy));
         console2.log("ActionRegistry:", address(registry));
 
+        // Connect AttestationRegistry to ActionRegistry
+        AttestationRegistry attestationRegistry = AttestationRegistry(address(attProxy));
+        registry.setAttestationRegistry(address(attestationRegistry));
+
         // 5. Deploy FeeCollector
         if (usdc != address(0)) {
             FeeCollector feeImpl = new FeeCollector();
@@ -71,7 +75,9 @@ contract Deploy is Script {
                 FeeCollector.initialize.selector, usdc, treasury
             );
             ERC1967Proxy feeProxy = new ERC1967Proxy(address(feeImpl), feeInit);
-            console2.log("FeeCollector:", address(feeProxy));
+            FeeCollector feeCollector = FeeCollector(address(feeProxy));
+            console2.log("FeeCollector:", address(feeCollector));
+            registry.setFeeCollector(address(feeCollector));
         }
 
         // 6. Deploy DividendDistributor

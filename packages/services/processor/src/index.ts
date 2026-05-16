@@ -1,13 +1,16 @@
 import { ethers } from 'ethers';
 import { Redis } from 'ioredis';
 import { Logger } from './utils/Logger';
-import { EventDeduplicator } from '../../ingestion/src/dedup/EventDeduplicator';
-import { EventClassifier } from '../../ingestion/src/classifier/EventClassifier';
+import { startMetricsServer } from './metrics';
+import { EventDeduplicator } from './dedup/EventDeduplicator';
+import { EventClassifier } from './classifier/EventClassifier';
 import { ActionIntentBuilder, ClassifiedEvent } from './builder/ActionIntentBuilder';
 import { OnChainSubmitter } from './submitter/OnChainSubmitter';
-import { RawCorporateActionEvent } from '../../ingestion/src/sources/ICorporateActionSource';
+import { RawCorporateActionEvent } from './types/CorporateActionTypes';
 
 const logger = new Logger('processor', 'main');
+
+startMetricsServer();
 
 async function main() {
   const redis = new Redis(process.env.REDIS_URL || 'redis://localhost:6379');

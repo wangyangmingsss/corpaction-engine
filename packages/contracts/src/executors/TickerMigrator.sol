@@ -31,6 +31,7 @@ contract TickerMigrator is
         TickerMigrationParams params;
         address oldToken;
         bool initialized;
+        bool oldTokenFrozen;
         uint256 totalMigrated;
     }
 
@@ -41,6 +42,9 @@ contract TickerMigrator is
 
     event TickerMigrated(bytes32 indexed intentId, address indexed oldToken,
         address indexed newToken, string newTicker);
+    event TokenMappingUpdated(bytes32 indexed intentId, address indexed oldToken,
+        address indexed newToken);
+    event OldTokenFrozen(bytes32 indexed intentId, address indexed oldToken);
     event MigrationClaimed(bytes32 indexed intentId, address indexed holder,
         uint256 amount);
 
@@ -71,12 +75,16 @@ contract TickerMigrator is
             params: params,
             oldToken: intent.targetToken,
             initialized: true,
+            oldTokenFrozen: false,
             totalMigrated: 0
         });
 
         emit TickerMigrated(
             intent.intentId, intent.targetToken,
             params.newToken, params.newTicker
+        );
+        emit TokenMappingUpdated(
+            intent.intentId, intent.targetToken, params.newToken
         );
 
         return abi.encode(intent.targetToken, params.newToken, params.newTicker);
@@ -105,6 +113,16 @@ contract TickerMigrator is
 
         IERC20(state.params.newToken).safeTransfer(msg.sender, amount);
         emit MigrationClaimed(intentId, msg.sender, amount);
+    }
+
+    function freezeOldToken(bytes32 intentId) external {
+        require(msg.sender == actionRegistry, "Only registry");
+        MigrationState storage state = migrations[intentId];
+        if (!state.initialized) revert NotInitialized(intentId);
+        require(!state.oldTokenFrozen, "Already frozen");
+
+        state.oldTokenFrozen = true;
+        emit OldTokenFrozen(intentId, state.oldToken);
     }
 
     function _authorizeUpgrade(address) internal view override {

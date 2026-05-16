@@ -202,7 +202,7 @@ contract ActionRegistry is
 
         // Collect fee before execution
         if (address(feeCollector) != address(0)) {
-            uint256 fee = feeCollector.collectFee(intent.actionType, 0);
+            uint256 fee = feeCollector.collectFee(intentId, intent.actionType, 0, address(0));
             emit FeeCollected(intentId, fee);
         }
 

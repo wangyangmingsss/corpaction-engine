@@ -1,5 +1,6 @@
 import { Redis } from 'ioredis';
 import { Logger } from './utils/Logger';
+import { startMetricsServer } from './metrics';
 import { EdgarMonitor } from './sources/EdgarMonitor';
 import { EodHistoricalAdapter } from './sources/EodHistoricalAdapter';
 import { PolygonAdapter } from './sources/PolygonAdapter';
@@ -8,6 +9,8 @@ import { EventClassifier } from './classifier/EventClassifier';
 import { ICorporateActionSource, RawCorporateActionEvent } from './sources/ICorporateActionSource';
 
 const logger = new Logger('ingestion', 'main');
+
+startMetricsServer();
 
 async function main() {
   const redis = new Redis(process.env.REDIS_URL || 'redis://localhost:6379');

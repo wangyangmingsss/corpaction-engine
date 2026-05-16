@@ -1,7 +1,10 @@
 import { ValidatorNode } from './ValidatorNode';
 import { Logger } from './utils/Logger';
+import { startMetricsServer } from './metrics';
 
 const logger = new Logger('validator', 'main');
+
+startMetricsServer();
 
 async function main() {
   const node = new ValidatorNode(

@@ -14,6 +14,7 @@ import {
   DelistingParams,
   SpinoffParams,
   TickerChangeParams,
+  LiquidationParams,
 } from './types';
 
 const REGISTRY_ABI = [
@@ -27,6 +28,8 @@ const REGISTRY_ABI = [
   'event ActionExecuted(bytes32 indexed intentId, uint8 indexed actionType, address indexed targetToken, bytes result)',
   'event ActionCancelled(bytes32 indexed intentId, string reason)',
   'event ActionFailed(bytes32 indexed intentId, string reason)',
+  'event EmergencyPaused(address indexed caller, string reason)',
+  'event EmergencyResumed(address indexed caller, string reason)',
 ];
 
 const DIVIDEND_ABI = [
@@ -271,6 +274,26 @@ export class CorpActionClient {
     return () => this.registry.off('ActionFailed', handler);
   }
 
+  onEmergencyPaused(
+    callback: (event: { caller: string; reason: string }) => void
+  ): () => void {
+    const handler = (caller: string, reason: string) => {
+      callback({ caller, reason });
+    };
+    this.registry.on('EmergencyPaused', handler);
+    return () => this.registry.off('EmergencyPaused', handler);
+  }
+
+  onEmergencyResumed(
+    callback: (event: { caller: string; reason: string }) => void
+  ): () => void {
+    const handler = (caller: string, reason: string) => {
+      callback({ caller, reason });
+    };
+    this.registry.on('EmergencyResumed', handler);
+    return () => this.registry.off('EmergencyResumed', handler);
+  }
+
   onDividendClaimed(
     callback: (event: { intentId: string; claimer: string; amount: bigint }) => void
   ): () => void {
@@ -387,75 +410,116 @@ export class CorpActionClient {
     switch (actionType) {
       case ActionType.DIVIDEND: {
         const decoded = abiCoder.decode(
-          ['address', 'uint256', 'uint256', 'bytes32', 'uint256'],
+          ['address', 'uint256', 'uint256', 'bytes32', 'uint256', 'uint256', 'bool', 'uint256'],
           rawParams
         );
         return {
           paymentToken: decoded[0],
-          amountPerShare: BigInt(decoded[1]),
-          totalAmount: BigInt(decoded[2]),
+          totalAmount: BigInt(decoded[1]),
+          amountPerShare: BigInt(decoded[2]),
           merkleRoot: decoded[3],
           snapshotBlock: BigInt(decoded[4]),
+          claimDeadline: BigInt(decoded[5]),
+          withholding: decoded[6],
+          withholdingBps: BigInt(decoded[7]),
         } as DividendParams;
       }
       case ActionType.FORWARD_SPLIT:
       case ActionType.REVERSE_SPLIT: {
-        const decoded = abiCoder.decode(['uint256', 'uint256', 'bool'], rawParams);
+        const decoded = abiCoder.decode(
+          ['uint256', 'uint256', 'bool', 'uint256', 'uint256', 'address', 'uint256'],
+          rawParams
+        );
         return {
           numerator: BigInt(decoded[0]),
           denominator: BigInt(decoded[1]),
-          adjustDerivatives: decoded[2],
+          isReverse: decoded[2],
+          expectedNewMultiplier: BigInt(decoded[3]),
+          fractionalHandling: BigInt(decoded[4]),
+          cashInLieuToken: decoded[5],
+          cashInLieuPrice: BigInt(decoded[6]),
         } as SplitParams;
       }
       case ActionType.MERGER_CASH:
       case ActionType.MERGER_STOCK:
       case ActionType.MERGER_HYBRID: {
         const decoded = abiCoder.decode(
-          ['address', 'uint256', 'uint256', 'uint256'],
+          ['uint8', 'address', 'uint256', 'uint256', 'uint256', 'address', 'uint256', 'bool', 'uint256', 'bytes32', 'uint256'],
           rawParams
         );
         return {
-          acquirerToken: decoded[0],
-          cashPerShare: BigInt(decoded[1]),
-          stockRatio: BigInt(decoded[2]),
-          totalConsideration: BigInt(decoded[3]),
+          mergerType: Number(decoded[0]),
+          acquiringToken: decoded[1],
+          exchangeRatioNum: BigInt(decoded[2]),
+          exchangeRatioDen: BigInt(decoded[3]),
+          cashPerShare: BigInt(decoded[4]),
+          cashToken: decoded[5],
+          electionDeadline: BigInt(decoded[6]),
+          hasElection: decoded[7],
+          prorationFactor: BigInt(decoded[8]),
+          merkleRoot: decoded[9],
+          totalCashPool: BigInt(decoded[10]),
         } as MergerParams;
       }
       case ActionType.DELISTING: {
         const decoded = abiCoder.decode(
-          ['string', 'uint256', 'uint256', 'address'],
+          ['uint256', 'uint256', 'uint256', 'uint256', 'address', 'bytes32', 'uint256', 'uint256'],
           rawParams
         );
         return {
-          reason: decoded[0],
-          finalPrice: BigInt(decoded[1]),
-          buybackDeadline: BigInt(decoded[2]),
-          custodianAddress: decoded[3],
+          announcementTime: BigInt(decoded[0]),
+          sellOnlyTime: BigInt(decoded[1]),
+          priceLockTime: BigInt(decoded[2]),
+          finalPrice: BigInt(decoded[3]),
+          settlementToken: decoded[4],
+          merkleRoot: decoded[5],
+          totalPool: BigInt(decoded[6]),
+          claimDeadline: BigInt(decoded[7]),
         } as DelistingParams;
       }
       case ActionType.SPINOFF: {
         const decoded = abiCoder.decode(
-          ['address', 'uint256', 'bytes32', 'uint256'],
+          ['address', 'uint256', 'uint256', 'bytes32', 'uint256', 'uint256'],
           rawParams
         );
         return {
           newToken: decoded[0],
-          distributionRatio: BigInt(decoded[1]),
-          merkleRoot: decoded[2],
-          snapshotBlock: BigInt(decoded[3]),
+          distributionRatioNum: BigInt(decoded[1]),
+          distributionRatioDen: BigInt(decoded[2]),
+          merkleRoot: decoded[3],
+          snapshotBlock: BigInt(decoded[4]),
+          claimDeadline: BigInt(decoded[5]),
         } as SpinoffParams;
       }
       case ActionType.TICKER_CHANGE: {
         const decoded = abiCoder.decode(
-          ['string', 'string', 'address', 'uint256'],
+          ['address', 'string', 'string', 'bytes32', 'uint256', 'uint256'],
           rawParams
         );
         return {
-          oldTicker: decoded[0],
+          newToken: decoded[0],
           newTicker: decoded[1],
-          newTokenAddress: decoded[2],
-          migrationDeadline: BigInt(decoded[3]),
+          newName: decoded[2],
+          merkleRoot: decoded[3],
+          snapshotBlock: BigInt(decoded[4]),
+          claimDeadline: BigInt(decoded[5]),
         } as TickerChangeParams;
+      }
+      case ActionType.LIQUIDATION: {
+        const decoded = abiCoder.decode(
+          ['uint256', 'uint256', 'uint256', 'uint256', 'address', 'bytes32', 'uint256', 'uint256'],
+          rawParams
+        );
+        return {
+          announcementTime: BigInt(decoded[0]),
+          sellOnlyTime: BigInt(decoded[1]),
+          priceLockTime: BigInt(decoded[2]),
+          finalPrice: BigInt(decoded[3]),
+          settlementToken: decoded[4],
+          merkleRoot: decoded[5],
+          totalPool: BigInt(decoded[6]),
+          claimDeadline: BigInt(decoded[7]),
+        } as LiquidationParams;
       }
       default:
         throw new CorpActionError(
@@ -467,35 +531,49 @@ export class CorpActionClient {
 
   // ========== INTEGRATION HELPERS ==========
 
-  async claimOnBehalf(
-    intentId: string,
-    holder: string,
-    amount: bigint,
-    merkleProof: string[],
+  /**
+   * Batch-claim dividends for the signer's own address across multiple intentIds.
+   *
+   * NOTE: The on-chain DividendDistributor contract validates msg.sender for claims,
+   * so claiming on behalf of another address is not supported. This method allows
+   * the signer to claim their own dividends for multiple intents in sequence.
+   */
+  async batchClaimDividends(
+    claims: Array<{ intentId: string; amount: bigint; merkleProof: string[] }>,
     signer: ethers.Signer
-  ): Promise<ethers.TransactionReceipt> {
+  ): Promise<ethers.TransactionReceipt[]> {
     if (!this.config.dividendDistributorAddress) {
       throw new CorpActionError(CorpActionErrorType.NOT_CONFIGURED, 'DividendDistributor address not configured');
     }
 
     const distributor = new ethers.Contract(
       this.config.dividendDistributorAddress,
-      [
-        ...DIVIDEND_ABI,
-        'function claimOnBehalf(bytes32 intentId, address holder, uint256 amount, bytes32[] calldata merkleProof) external',
-      ],
+      DIVIDEND_ABI,
       signer
     );
 
-    return this._callWithRetry(async () => {
-      const tx = await distributor.claimOnBehalf(intentId, holder, amount, merkleProof);
-      return await tx.wait();
-    });
+    const receipts: ethers.TransactionReceipt[] = [];
+    for (const claim of claims) {
+      const receipt = await this._callWithRetry(async () => {
+        const tx = await distributor.claimDividend(claim.intentId, claim.amount, claim.merkleProof);
+        return await tx.wait();
+      });
+      receipts.push(receipt);
+    }
+
+    return receipts;
   }
 
+  /**
+   * Compute the strike price adjustment factor for a split by reading the
+   * SplitExecuted event data from the chain and calculating newMultiplier / oldMultiplier.
+   *
+   * This is computed client-side since the contract does not expose a
+   * getAdjustmentFactor function.
+   */
   async getStrikePriceAdjustment(
     intentId: string
-  ): Promise<{ numerator: bigint; denominator: bigint; adjustedFactor: number }> {
+  ): Promise<{ numerator: bigint; denominator: bigint; adjustmentFactor: number }> {
     if (!this.config.splitExecutorAddress) {
       throw new CorpActionError(CorpActionErrorType.NOT_CONFIGURED, 'SplitExecutor address not configured');
     }
@@ -507,12 +585,26 @@ export class CorpActionClient {
     );
 
     return this._callWithRetry(async () => {
-      const [numerator, denominator] = await executor.getAdjustmentFactor(intentId);
-      return {
-        numerator: BigInt(numerator),
-        denominator: BigInt(denominator),
-        adjustedFactor: Number(numerator) / Number(denominator),
-      };
+      // Query the SplitExecuted event for this intentId to get numerator/denominator
+      const filter = executor.filters.SplitExecuted(intentId);
+      const events = await executor.queryFilter(filter);
+
+      if (events.length === 0) {
+        throw new CorpActionError(
+          CorpActionErrorType.CONTRACT_ERROR,
+          `No SplitExecuted event found for intentId ${intentId}`
+        );
+      }
+
+      const event = events[events.length - 1];
+      const args = (event as ethers.EventLog).args;
+      const numerator = BigInt(args[2]);
+      const denominator = BigInt(args[3]);
+
+      // adjustmentFactor = newMultiplier / oldMultiplier = numerator / denominator
+      const adjustmentFactor = Number(numerator) / Number(denominator);
+
+      return { numerator, denominator, adjustmentFactor };
     });
   }
 
