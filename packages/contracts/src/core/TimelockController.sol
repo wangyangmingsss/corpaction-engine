@@ -7,7 +7,7 @@ import {UUPSUpgradeable} from
     "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import {ICorpActionTypes} from "../interfaces/ICorpActionTypes.sol";
 
-contract CorpActionTimelock is
+contract TimelockController is
     ICorpActionTypes,
     AccessControlUpgradeable,
     UUPSUpgradeable

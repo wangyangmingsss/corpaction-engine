@@ -204,11 +204,18 @@ export class CorpActionClient {
   ): () => void {
     const filter = this.registry.filters.ActionExecuted(null, null, tokenAddress);
 
-    const handler = (intentId: string, actionType: number, targetToken: string, result: string) => {
+    const handler = async (intentId: string, actionType: number, targetToken: string, result: string) => {
+      let ticker = '';
+      try {
+        const action = await this.registry.getAction(intentId);
+        ticker = action[3] ?? '';
+      } catch {
+        // If fetching ticker fails, fall back to empty string
+      }
       callback({
         intentId,
         type: ActionType[actionType] || 'UNKNOWN',
-        ticker: '',
+        ticker,
         targetToken,
         params: { result },
         timestamp: Math.floor(Date.now() / 1000),

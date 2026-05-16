@@ -14,4 +14,5 @@ export {
   DelistingParams,
   SpinoffParams,
   TickerChangeParams,
+  LiquidationParams,
 } from './types';

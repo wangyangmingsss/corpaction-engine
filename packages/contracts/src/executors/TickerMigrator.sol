@@ -10,6 +10,7 @@ import {ReentrancyGuardUpgradeable} from
     "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
 import {IActionExecutor} from "../interfaces/IActionExecutor.sol";
 import {ICorpActionTypes} from "../interfaces/ICorpActionTypes.sol";
+import {IActionRegistry} from "../interfaces/IActionRegistry.sol";
 
 contract TickerMigrator is
     IActionExecutor,
@@ -79,6 +80,14 @@ contract TickerMigrator is
             totalMigrated: 0
         });
 
+        // Step 4 (doc 4.10): Freeze the old token during migration
+        _freezeOldToken(intent.intentId);
+
+        // Step 5 (doc 4.10): Update the registry token mapping (old -> new)
+        IActionRegistry(actionRegistry).updateTokenMapping(
+            intent.intentId, intent.targetToken, params.newToken
+        );
+
         emit TickerMigrated(
             intent.intentId, intent.targetToken,
             params.newToken, params.newTicker
@@ -121,7 +130,26 @@ contract TickerMigrator is
         if (!state.initialized) revert NotInitialized(intentId);
         require(!state.oldTokenFrozen, "Already frozen");
 
+        _freezeOldToken(intentId);
+    }
+
+    /// @dev Internal freeze logic shared by execute() and freezeOldToken().
+    ///      Pauses the old token if it supports the pause interface, and marks
+    ///      the migration state as frozen.
+    function _freezeOldToken(bytes32 intentId) internal {
+        MigrationState storage state = migrations[intentId];
+
         state.oldTokenFrozen = true;
+
+        // Attempt to pause the old token if it exposes a pause() function.
+        // Uses a low-level call so migration does not revert if the token
+        // does not implement pausable (the frozen flag still gets set).
+        // solhint-disable-next-line avoid-low-level-calls
+        (bool success,) = state.oldToken.call(
+            abi.encodeWithSignature("pause()")
+        );
+        // success intentionally unchecked -- token may not be pausable
+
         emit OldTokenFrozen(intentId, state.oldToken);
     }
 

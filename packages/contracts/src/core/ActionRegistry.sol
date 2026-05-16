@@ -15,6 +15,7 @@ import {IActionExecutor} from "../interfaces/IActionExecutor.sol";
 import {ICorpActionTypes} from "../interfaces/ICorpActionTypes.sol";
 import {IAttestationRegistry} from "../interfaces/IAttestationRegistry.sol";
 import {IFeeCollector} from "../interfaces/IFeeCollector.sol";
+import {TimelockController} from "./TimelockController.sol";
 
 contract ActionRegistry is
     IActionRegistry,
@@ -44,6 +45,10 @@ contract ActionRegistry is
 
     IFeeCollector public feeCollector;
     IAttestationRegistry public attestationRegistry;
+    TimelockController public timelockController;
+
+    /// @notice Maps old token addresses to new token addresses after ticker migrations
+    mapping(address => address) public tokenMapping;
 
     event ActionProposed(bytes32 indexed intentId, ActionType indexed actionType,
         address indexed targetToken, string ticker);
@@ -66,6 +71,8 @@ contract ActionRegistry is
     event FeeCollectorUpdated(address feeCollector);
     event AttestationRegistryUpdated(address attestationRegistry);
     event QueuedTTLUpdated(uint256 ttl);
+    event TimelockControllerUpdated(address timelockController);
+    event TokenMappingUpdated(address indexed oldToken, address indexed newToken, bytes32 indexed intentId);
 
     error InvalidState(bytes32 intentId, ActionState current, ActionState expected);
     error InsufficientValidations(uint256 have, uint256 need);
@@ -168,7 +175,12 @@ contract ActionRegistry is
         if (intent.state != ActionState.VALIDATED)
             revert InvalidState(intentId, intent.state, ActionState.VALIDATED);
 
-        uint256 timelock = _timelocks[intent.actionType];
+        uint256 timelock;
+        if (address(timelockController) != address(0)) {
+            timelock = timelockController.getTimelock(intent.actionType);
+        } else {
+            timelock = _timelocks[intent.actionType];
+        }
         intent.state = ActionState.QUEUED;
         _executionTime[intentId] = block.timestamp + timelock;
         emit ActionQueued(intentId, _executionTime[intentId]);
@@ -364,6 +376,35 @@ contract ActionRegistry is
     ) external onlyRole(DEFAULT_ADMIN_ROLE) {
         queuedTTL = _queuedTTL;
         emit QueuedTTLUpdated(_queuedTTL);
+    }
+
+    function setTimelockController(
+        address _timelockController
+    ) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        timelockController = TimelockController(_timelockController);
+        emit TimelockControllerUpdated(_timelockController);
+    }
+
+    /// @notice Updates the token mapping when a ticker migration replaces an old token with a new one.
+    /// @dev Only callable by registered executor contracts.
+    function updateTokenMapping(
+        bytes32 intentId,
+        address oldToken,
+        address newToken
+    ) external {
+        // Verify caller is a registered executor
+        bool isExecutor = false;
+        // Check all action types to see if caller is a registered executor
+        for (uint256 i = 0; i < 10; i++) {
+            if (_executors[ActionType(i)] == msg.sender) {
+                isExecutor = true;
+                break;
+            }
+        }
+        require(isExecutor, "Only registered executor");
+
+        tokenMapping[oldToken] = newToken;
+        emit TokenMappingUpdated(oldToken, newToken, intentId);
     }
 
     // ========== QUERIES ==========

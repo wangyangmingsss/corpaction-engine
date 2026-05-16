@@ -105,7 +105,13 @@ export class EventDeduplicator {
   }
 
   private computeKey(event: RawCorporateActionEvent): string {
-    const dateStr = event.detectedAt.toISOString().split('T')[0];
+    // Primary key: ticker + event type + effectiveDate (per spec 5.4)
+    // Fall back to detectedAt only when no effectiveDate is available
+    const effectiveDate = event.rawData.effective_date || event.rawData.effectiveDate
+      || event.rawData.pay_date || event.rawData.ex_dividend_date;
+    const dateStr = effectiveDate
+      ? new Date(String(effectiveDate)).toISOString().split('T')[0]
+      : event.detectedAt.toISOString().split('T')[0];
     const tickerKey = event.ticker
       ? `${event.ticker}:${event.eventType || 'UNKNOWN'}:${dateStr}`
       : null;

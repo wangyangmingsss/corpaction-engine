@@ -29,4 +29,10 @@ interface IActionRegistry {
 
     function getExecutionTime(bytes32 intentId)
         external view returns (uint256);
+
+    function updateTokenMapping(
+        bytes32 intentId,
+        address oldToken,
+        address newToken
+    ) external;
 }

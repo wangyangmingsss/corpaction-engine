@@ -5,7 +5,7 @@ import {Script, console2} from "forge-std/Script.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import {ActionRegistry} from "../src/core/ActionRegistry.sol";
 import {ValidatorManager} from "../src/core/ValidatorManager.sol";
-import {CorpActionTimelock} from "../src/core/TimelockController.sol";
+import {TimelockController} from "../src/core/TimelockController.sol";
 import {AttestationRegistry} from "../src/verification/AttestationRegistry.sol";
 import {FeeCollector} from "../src/fees/FeeCollector.sol";
 import {DividendDistributor} from "../src/executors/DividendDistributor.sol";
@@ -42,8 +42,8 @@ contract Deploy is Script {
         console2.log("ValidatorManager:", address(validatorManager));
 
         // 2. Deploy TimelockController
-        CorpActionTimelock timelockImpl = new CorpActionTimelock();
-        bytes memory tlInit = abi.encodeWithSelector(CorpActionTimelock.initialize.selector);
+        TimelockController timelockImpl = new TimelockController();
+        bytes memory tlInit = abi.encodeWithSelector(TimelockController.initialize.selector);
         ERC1967Proxy tlProxy = new ERC1967Proxy(address(timelockImpl), tlInit);
         console2.log("TimelockController:", address(tlProxy));
 
@@ -67,6 +67,9 @@ contract Deploy is Script {
         // Connect AttestationRegistry to ActionRegistry
         AttestationRegistry attestationRegistry = AttestationRegistry(address(attProxy));
         registry.setAttestationRegistry(address(attestationRegistry));
+
+        // Connect TimelockController to ActionRegistry
+        registry.setTimelockController(address(tlProxy));
 
         // 5. Deploy FeeCollector
         if (usdc != address(0)) {
@@ -139,17 +142,9 @@ contract Deploy is Script {
         console2.log("TickerMigrator:", address(tickerProxy));
         registry.registerExecutor(ICorpActionTypes.ActionType.TICKER_CHANGE, address(tickerProxy));
 
-        // Set timelocks
-        registry.setTimelock(ICorpActionTypes.ActionType.DIVIDEND, 1 hours);
-        registry.setTimelock(ICorpActionTypes.ActionType.FORWARD_SPLIT, 2 hours);
-        registry.setTimelock(ICorpActionTypes.ActionType.REVERSE_SPLIT, 2 hours);
-        registry.setTimelock(ICorpActionTypes.ActionType.MERGER_CASH, 24 hours);
-        registry.setTimelock(ICorpActionTypes.ActionType.MERGER_STOCK, 24 hours);
-        registry.setTimelock(ICorpActionTypes.ActionType.MERGER_HYBRID, 24 hours);
-        registry.setTimelock(ICorpActionTypes.ActionType.SPINOFF, 24 hours);
-        registry.setTimelock(ICorpActionTypes.ActionType.DELISTING, 48 hours);
-        registry.setTimelock(ICorpActionTypes.ActionType.LIQUIDATION, 48 hours);
-        registry.setTimelock(ICorpActionTypes.ActionType.TICKER_CHANGE, 1 hours);
+        // Timelocks are managed by TimelockController (connected above).
+        // The internal _timelocks mapping in ActionRegistry serves as a fallback
+        // if TimelockController is not set.
 
         vm.stopBroadcast();
 

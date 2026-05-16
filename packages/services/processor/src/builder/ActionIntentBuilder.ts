@@ -43,6 +43,8 @@ const ACTION_TYPE_MAP: Record<string, number> = {
 const MAX_UINT128 = (1n << 128n) - 1n;
 const MULTIPLIER_DECIMALS = 18;
 const MULTIPLIER_BASE = 10n ** BigInt(MULTIPLIER_DECIMALS);
+const USDC_DECIMALS = 6;
+const USDC_BASE = 10n ** BigInt(USDC_DECIMALS);
 
 export class ActionIntentBuilder {
   private tokenRegistry: Map<string, string>;
@@ -144,6 +146,18 @@ export class ActionIntentBuilder {
     return value;
   }
 
+  /**
+   * Convert a dollar amount to USDC-denominated amount (6 decimals).
+   * E.g., $1.50 => 1500000n
+   */
+  private toUsdcAmount(dollars: unknown): bigint {
+    if (dollars == null) return 0n;
+    const num = Number(dollars);
+    if (isNaN(num)) return 0n;
+    // Multiply by 10^6 using integer math to avoid floating point issues
+    return BigInt(Math.round(num * 1e6));
+  }
+
   private encodeActionParams(actionType: string, params: Record<string, unknown>): string {
     const coder = ethers.AbiCoder.defaultAbiCoder();
 
@@ -153,8 +167,8 @@ export class ActionIntentBuilder {
           ['address', 'uint256', 'uint256', 'bytes32', 'uint256', 'uint256', 'bool', 'uint256'],
           [
             params.paymentToken || ethers.ZeroAddress,
-            params.totalAmount || 0,
-            params.amountPerShare || 0,
+            this.toUsdcAmount(params.totalAmount),
+            this.toUsdcAmount(params.amountPerShare),
             params.merkleRoot || ethers.ZeroHash,
             params.snapshotBlock || 0,
             params.claimDeadline || 0,
@@ -185,7 +199,92 @@ export class ActionIntentBuilder {
             expectedMul,
             params.fractionalHandling || 0,
             params.cashInLieuToken || ethers.ZeroAddress,
-            params.cashInLieuPrice || 0,
+            this.toUsdcAmount(params.cashInLieuPrice),
+          ]
+        );
+      }
+
+      case 'MERGER_CASH':
+      case 'MERGER_STOCK':
+      case 'MERGER_HYBRID': {
+        // Matches MergerHandler.MergerParams struct:
+        // (uint8 mergerType, address acquiringToken, uint256 exchangeRatioNum, uint256 exchangeRatioDen,
+        //  uint256 cashPerShare, address cashToken, uint256 electionDeadline,
+        //  bool hasElection, uint256 prorationFactor, bytes32 merkleRoot, uint256 totalCashPool)
+        const mergerTypeMap: Record<string, number> = {
+          MERGER_CASH: 0,
+          MERGER_STOCK: 1,
+          MERGER_HYBRID: 2,
+        };
+        return coder.encode(
+          ['uint8', 'address', 'uint256', 'uint256', 'uint256', 'address', 'uint256', 'bool', 'uint256', 'bytes32', 'uint256'],
+          [
+            mergerTypeMap[actionType] ?? 0,
+            params.acquiringToken || ethers.ZeroAddress,
+            params.exchangeRatioNum || params.exchange_ratio_num || 0,
+            params.exchangeRatioDen || params.exchange_ratio_den || 1,
+            this.toUsdcAmount(params.cashPerShare || params.cash_per_share),
+            params.cashToken || ethers.ZeroAddress,
+            params.electionDeadline || params.election_deadline || 0,
+            params.hasElection || params.has_election || false,
+            params.prorationFactor || params.proration_factor || 10000, // BPS, default 100%
+            params.merkleRoot || ethers.ZeroHash,
+            this.toUsdcAmount(params.totalCashPool || params.total_cash_pool),
+          ]
+        );
+      }
+
+      case 'SPINOFF': {
+        // Matches SpinoffExecutor.SpinoffParams struct:
+        // (address newToken, uint256 distributionRatioNum, uint256 distributionRatioDen,
+        //  bytes32 merkleRoot, uint256 snapshotBlock, uint256 claimDeadline)
+        return coder.encode(
+          ['address', 'uint256', 'uint256', 'bytes32', 'uint256', 'uint256'],
+          [
+            params.newToken || params.new_token || ethers.ZeroAddress,
+            params.distributionRatioNum || params.distribution_ratio_num || 1,
+            params.distributionRatioDen || params.distribution_ratio_den || 1,
+            params.merkleRoot || ethers.ZeroHash,
+            params.snapshotBlock || params.snapshot_block || 0,
+            params.claimDeadline || params.claim_deadline || 0,
+          ]
+        );
+      }
+
+      case 'DELISTING':
+      case 'LIQUIDATION': {
+        // Matches DelistingManager.DelistingParams struct:
+        // (uint256 announcementTime, uint256 sellOnlyTime, uint256 priceLockTime,
+        //  uint256 finalPrice, address settlementToken, bytes32 merkleRoot,
+        //  uint256 totalPool, uint256 claimDeadline)
+        return coder.encode(
+          ['uint256', 'uint256', 'uint256', 'uint256', 'address', 'bytes32', 'uint256', 'uint256'],
+          [
+            params.announcementTime || params.announcement_time || 0,
+            params.sellOnlyTime || params.sell_only_time || 0,
+            params.priceLockTime || params.price_lock_time || 0,
+            this.toUsdcAmount(params.finalPrice || params.final_price),
+            params.settlementToken || params.settlement_token || ethers.ZeroAddress,
+            params.merkleRoot || ethers.ZeroHash,
+            this.toUsdcAmount(params.totalPool || params.total_pool),
+            params.claimDeadline || params.claim_deadline || 0,
+          ]
+        );
+      }
+
+      case 'TICKER_CHANGE': {
+        // Matches TickerMigrator.TickerMigrationParams struct:
+        // (address newToken, string newTicker, string newName,
+        //  bytes32 merkleRoot, uint256 snapshotBlock, uint256 claimDeadline)
+        return coder.encode(
+          ['address', 'string', 'string', 'bytes32', 'uint256', 'uint256'],
+          [
+            params.newToken || params.new_token || ethers.ZeroAddress,
+            params.newTicker || params.new_ticker || '',
+            params.newName || params.new_name || '',
+            params.merkleRoot || ethers.ZeroHash,
+            params.snapshotBlock || params.snapshot_block || 0,
+            params.claimDeadline || params.claim_deadline || 0,
           ]
         );
       }

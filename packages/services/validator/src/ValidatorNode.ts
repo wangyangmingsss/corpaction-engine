@@ -1,5 +1,7 @@
 import { ethers } from 'ethers';
 import { Redis } from 'ioredis';
+import { SigningService } from './SigningService';
+import { SourceVerifier } from './SourceVerifier';
 
 const ACTION_REGISTRY_ABI = [
   'event ActionProposed(bytes32 indexed intentId, uint8 indexed actionType, address indexed targetToken, string ticker)',
@@ -9,39 +11,40 @@ const ACTION_REGISTRY_ABI = [
   'function validateAction(bytes32 intentId, bytes signature) external',
 ];
 
-interface SourceVerifier {
+interface SourceVerifierInterface {
   verify(eventId: string, actionType: number, params: string): Promise<{ verified: boolean; details: string }>;
 }
 
 export class ValidatorNode {
-  private wallet: ethers.Wallet;
+  private signingService: SigningService;
   private provider: ethers.JsonRpcProvider;
   private redis: Redis;
   private redisSub: Redis;
   private registryAddress: string;
   private registry: ethers.Contract;
   private isRunning = false;
-  private sourceVerifiers: SourceVerifier[];
+  private sourceVerifiers: SourceVerifierInterface[];
 
   constructor(
     rpcUrl: string,
     privateKey: string,
     registryAddress: string,
     redisUrl: string,
-    sourceVerifiers: SourceVerifier[] = []
+    sourceVerifiers: SourceVerifierInterface[] = []
   ) {
     this.provider = new ethers.JsonRpcProvider(rpcUrl);
-    this.wallet = new ethers.Wallet(privateKey, this.provider);
+    this.signingService = new SigningService(privateKey);
+    const wallet = new ethers.Wallet(privateKey, this.provider);
     this.redis = new Redis(redisUrl);
     this.redisSub = new Redis(redisUrl);
     this.registryAddress = registryAddress;
-    this.registry = new ethers.Contract(registryAddress, ACTION_REGISTRY_ABI, this.wallet);
+    this.registry = new ethers.Contract(registryAddress, ACTION_REGISTRY_ABI, wallet);
     this.sourceVerifiers = sourceVerifiers;
   }
 
   async start(): Promise<void> {
     this.isRunning = true;
-    this.log('info', 'Validator node started', { address: this.wallet.address });
+    this.log('info', 'Validator node started', { address: this.signingService.address });
 
     // Start all loops concurrently
     await Promise.all([
@@ -59,7 +62,7 @@ export class ValidatorNode {
   }
 
   async signIntent(intentHash: string): Promise<string> {
-    return await this.wallet.signMessage(ethers.getBytes(intentHash));
+    return await this.signingService.signMessage(ethers.getBytes(intentHash));
   }
 
   async validateAndSign(
@@ -68,13 +71,7 @@ export class ValidatorNode {
     targetToken: string,
     actionParams: string
   ): Promise<string> {
-    const hash = ethers.keccak256(
-      ethers.AbiCoder.defaultAbiCoder().encode(
-        ['bytes32', 'uint8', 'address', 'bytes'],
-        [intentId, actionType, targetToken, actionParams]
-      )
-    );
-    return await this.wallet.signMessage(ethers.getBytes(hash));
+    return await this.signingService.signValidation(intentId, actionType, targetToken, actionParams);
   }
 
   /**
@@ -131,7 +128,7 @@ export class ValidatorNode {
               JSON.stringify({
                 type: 'VALIDATION_SUBMITTED',
                 intentId,
-                validator: this.wallet.address,
+                validator: this.signingService.address,
                 timestamp: Date.now(),
               })
             );
@@ -147,7 +144,7 @@ export class ValidatorNode {
               JSON.stringify({
                 type: 'VERIFICATION_CONFLICT',
                 intentId,
-                validator: this.wallet.address,
+                validator: this.signingService.address,
                 details: verificationResult.details,
                 timestamp: Date.now(),
               })
@@ -157,7 +154,7 @@ export class ValidatorNode {
             await this.redis.xadd(
               'corpaction:validator_conflicts', '*',
               'intentId', intentId,
-              'validator', this.wallet.address,
+              'validator', this.signingService.address,
               'details', verificationResult.details
             );
           }
@@ -190,7 +187,7 @@ export class ValidatorNode {
         const msg = JSON.parse(message);
 
         // Ignore our own messages
-        if (msg.validator === this.wallet.address) return;
+        if (msg.validator === this.signingService.address) return;
 
         switch (msg.type) {
           case 'VALIDATION_SUBMITTED':
@@ -274,7 +271,7 @@ export class ValidatorNode {
     while (this.isRunning) {
       try {
         await this.redis.set(
-          `validator:heartbeat:${this.wallet.address}`,
+          `validator:heartbeat:${this.signingService.address}`,
           Date.now().toString(),
           'EX', 300
         );
@@ -290,7 +287,7 @@ export class ValidatorNode {
       timestamp: new Date().toISOString(),
       level,
       service: 'validator',
-      address: this.wallet.address,
+      address: this.signingService.address,
       message,
       ...meta,
     }));
