@@ -44,7 +44,7 @@ SEC EDGAR / DTCC / Data APIs  -->  Ingestion Layer  -->  Normalization Engine
 |-------|-----------|------------|
 | Data Ingestion | SEC EDGAR Monitor (+ RSS fallback), DTCC ISO 20022 Parser, EOD Historical, Polygon.io, Alpha Vantage, Bloomberg/Refinitiv (enterprise) | TypeScript, Redis |
 | Normalization | Event Classifier (8-K item-level), Event Deduplicator (ISIN fallback, multi-source confidence), ActionIntent Builder (ERC-8056 multiplier pre-calc) | TypeScript, Rule Engine |
-| On-Chain Execution | ActionRegistry (with fee/attestation integration), 6 Executor Contracts, AttestationRegistry | Solidity 0.8.24, Foundry, OpenZeppelin 5.x |
+| On-Chain Execution | ActionRegistry (with fee/attestation integration), 14 Contracts (6 Executors + 3 Core + 2 Support + 3 Integrations), AttestationRegistry | Solidity 0.8.24, Foundry, OpenZeppelin 5.x |
 | Attestation & Governance | Multi-sig Validator (on-chain event listening, coordination), Source Attestation, Audit Trail | Solidity, ECDSA, EIP-712 |
 | Monitoring & Alerting | Prometheus (10 alert rules), Grafana dashboards, structured JSON logging, /metrics endpoints | Prometheus, Grafana |
 
@@ -165,7 +165,7 @@ SEC EDGAR 8-K Filing
 
 ## Testing
 
-Comprehensive testing suite with 100+ tests across 5 categories:
+Comprehensive testing suite with 127+ tests across 5 categories:
 
 ### Unit Tests (12 files)
 Every contract has dedicated unit tests covering happy paths, revert conditions, edge cases, access control, and state transitions:
@@ -379,6 +379,20 @@ cd ../..
 docker-compose up -d
 ```
 
+### Run the Full Dividend Demo
+
+```bash
+# Run on local Anvil fork (no testnet needed)
+cd packages/contracts
+forge script script/demo/FullDividendDemo.s.sol -vvvv
+
+# Or on Robinhood Chain Testnet
+forge script script/demo/FullDividendDemo.s.sol \
+  --rpc-url https://rpc.testnet.chain.robinhood.com --broadcast -vvvv
+```
+
+See [Demo Walkthrough](docs/DEMO_WALKTHROUGH.md) for expected output and step-by-step guide.
+
 ## Repository Structure
 
 ```
@@ -477,6 +491,37 @@ CorpAction Engine integrates with key Arbitrum ecosystem partners:
 - **LayerZero V2**: Cross-chain corporate action notifications to Arbitrum One,
   Base, and Ethereum mainnet
 - **OpenZeppelin**: Audited base contracts for all access control and upgradeability
+
+## Ecosystem Integrations
+
+### Chainlink Data Feeds
+
+`ChainlinkPriceAdapter` provides automated price oracles for delisting liquidation. When a stock is being delisted, the system auto-fetches the final reference price from Chainlink instead of relying on manual input:
+
+- Staleness checks (MAX_PRICE_AGE = 1 hour)
+- Invalid price protection (rejects zero/negative)
+- USDC conversion (8-decimal Chainlink to 6-decimal USDC)
+- Manual fallback via `lockFinalPriceManual()` when feeds are unavailable
+
+### LayerZero V2 Cross-Chain Notifications
+
+`CrossChainNotifier` broadcasts corporate action events to destination chains:
+
+- **MSG_ACTION_EXECUTED**: Notify DeFi protocols on Arbitrum One, Base, Ethereum of completed actions
+- **MSG_DELISTING_INITIATED**: Emergency notification for lending protocols to begin unwinding positions
+- Fee estimation via `quoteBroadcastFee()` before sending
+- `CrossChainReceiver` on destination chains decodes and emits typed events
+
+### DeFi Protocol Integration Examples
+
+| Protocol Type | Use Case | Trigger Event |
+|--------------|----------|---------------|
+| GMX (Perps) | Auto-adjust contract size on stock split | `CorporateActionReceived` (FORWARD_SPLIT) |
+| Uniswap V3 | Auto-remove liquidity on delisting | `DelistingWarning` |
+| Aave/Compound | Adjust collateral factor on reverse split | `CorporateActionReceived` (REVERSE_SPLIT) |
+| Index Funds | Rebalance on merger/spinoff | `CorporateActionReceived` (MERGER_*, SPINOFF) |
+
+See [Integration Guide](docs/integration-guide.md) for full Solidity examples.
 
 ## Security
 
@@ -632,7 +677,7 @@ All off-chain service test suites contain real, meaningful tests (not just place
 - **Processor**: ActionIntentBuilder, MerkleTreeBuilder, ErrorRecovery
 - **Validator**: ValidatorNode, SigningService, SourceVerifier
 
-Combined with the on-chain test suite (100+ Foundry tests across unit, integration, invariant, scenario, and fuzz categories), the project maintains comprehensive coverage across all layers.
+Combined with the on-chain test suite (127+ Foundry tests across unit, integration, invariant, scenario, and fuzz categories), the project maintains comprehensive coverage across all layers.
 
 ## Roadmap to Mainnet
 

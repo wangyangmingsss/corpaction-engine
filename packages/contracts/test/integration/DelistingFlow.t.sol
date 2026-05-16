@@ -53,7 +53,7 @@ contract DelistingFlowTest is Test {
 
         DelistingManager delistImpl = new DelistingManager();
         bytes memory delistInit = abi.encodeWithSelector(
-            DelistingManager.initialize.selector, address(registry)
+            DelistingManager.initialize.selector, address(registry), address(0xBEEF)
         );
         ERC1967Proxy delistProxy = new ERC1967Proxy(address(delistImpl), delistInit);
         delistMgr = DelistingManager(address(delistProxy));

@@ -51,7 +51,7 @@ contract StateMachineInvariantTest is Test {
 
         DelistingManager impl = new DelistingManager();
         bytes memory initData = abi.encodeWithSelector(
-            DelistingManager.initialize.selector, address(this)
+            DelistingManager.initialize.selector, address(this), address(0xBEEF)
         );
         ERC1967Proxy proxy = new ERC1967Proxy(address(impl), initData);
         mgr = DelistingManager(address(proxy));

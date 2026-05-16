@@ -78,6 +78,8 @@ export class CorpActionAgent {
   private redis: Redis;
   private logger: Logger;
   private config: AgentConfig;
+  private classificationCount = 0;
+  private totalTokensUsed = 0;
 
   constructor(redis: Redis, logger: Logger, config?: Partial<AgentConfig>) {
     this.config = { ...DEFAULT_CONFIG, ...config };
@@ -138,6 +140,7 @@ export class CorpActionAgent {
         }
 
         const parsed = JSON.parse(textBlock.text);
+        this.validateResponse(parsed);
         const result: AgentClassificationResult = {
           actionType: parsed.actionType,
           confidence: parsed.confidence,
@@ -149,35 +152,12 @@ export class CorpActionAgent {
           cached: false,
         };
 
-        // --- Publish metrics ---
-        registry.counter('corpaction_ai_classifications_total', 'AI classifications', {
-          action_type: result.actionType,
-          confidence: result.confidence,
-        });
-        registry.histogram(
-          'corpaction_ai_latency_seconds',
-          'AI classification latency',
-          latencyMs / 1000,
-          { model: this.config.model }
-        );
+        // --- Track counters ---
+        this.classificationCount++;
+        this.totalTokensUsed += (response.usage?.input_tokens ?? 0) + (response.usage?.output_tokens ?? 0);
 
-        // --- Publish to Redis metrics stream ---
-        try {
-          await this.redis.xadd(
-            'corpaction:ai_metrics',
-            '*',
-            'ticker', event.ticker,
-            'actionType', result.actionType,
-            'confidence', result.confidence,
-            'latencyMs', String(latencyMs),
-            'model', this.config.model,
-            'attempt', String(attempt + 1)
-          );
-        } catch (metricsErr) {
-          this.logger.warn('Failed to publish AI metrics to Redis stream', {
-            error: String(metricsErr),
-          });
-        }
+        // --- Publish metrics ---
+        await this.publishMetrics(result, event, attempt + 1);
 
         // --- Write to cache ---
         try {
@@ -244,6 +224,64 @@ Raw Data:
 ${JSON.stringify(event.rawData, null, 2)}
 
 Analyze the above data and classify this corporate action. If the event type hint is ambiguous (e.g., CORPORATE_EVENT, PROXY_VOTE), use the raw data to determine the correct classification.`;
+  }
+
+  private buildClassificationPrompt(event: RawCorporateActionEvent): string {
+    return this.buildUserPrompt(event);
+  }
+
+  private validateResponse(parsed: any): void {
+    const validTypes = [
+      'DIVIDEND', 'FORWARD_SPLIT', 'REVERSE_SPLIT',
+      'MERGER_CASH', 'MERGER_STOCK', 'MERGER_HYBRID',
+      'SPINOFF', 'DELISTING', 'LIQUIDATION', 'TICKER_CHANGE', 'UNKNOWN'
+    ];
+    if (!parsed || typeof parsed !== 'object') {
+      throw new Error('Response is not a valid object');
+    }
+    if (!validTypes.includes(parsed.actionType)) {
+      throw new Error(`Invalid actionType: ${parsed.actionType}`);
+    }
+    if (!['LOW', 'MEDIUM', 'HIGH'].includes(parsed.confidence)) {
+      throw new Error(`Invalid confidence: ${parsed.confidence}`);
+    }
+  }
+
+  private async publishMetrics(result: AgentClassificationResult, event: RawCorporateActionEvent, attempt: number): Promise<void> {
+    registry.counter('corpaction_ai_classifications_total', 'AI classifications', {
+      action_type: result.actionType,
+      confidence: result.confidence,
+    });
+    registry.histogram(
+      'corpaction_ai_latency_seconds',
+      'AI classification latency',
+      result.latencyMs / 1000,
+      { model: this.config.model }
+    );
+    try {
+      await this.redis.xadd(
+        'corpaction:ai_metrics', '*',
+        'ticker', event.ticker,
+        'actionType', result.actionType,
+        'confidence', result.confidence,
+        'latencyMs', String(result.latencyMs),
+        'model', this.config.model,
+        'attempt', String(attempt)
+      );
+    } catch (metricsErr) {
+      this.logger.warn('Failed to publish AI metrics to Redis stream', {
+        error: String(metricsErr),
+      });
+    }
+  }
+
+  getStats(): { classifications: number; tokensUsed: number; model: string; cacheHitRate: string } {
+    return {
+      classifications: this.classificationCount,
+      tokensUsed: this.totalTokensUsed,
+      model: this.config.model,
+      cacheHitRate: 'N/A',
+    };
   }
 
   private sleep(ms: number): Promise<void> {

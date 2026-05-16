@@ -6,7 +6,7 @@ import { EdgarMonitor } from './sources/EdgarMonitor';
 import { EodHistoricalAdapter } from './sources/EodHistoricalAdapter';
 import { PolygonAdapter } from './sources/PolygonAdapter';
 import { EventDeduplicator } from './dedup/EventDeduplicator';
-import { EventClassifier } from './classifier/EventClassifier';
+import { HybridClassifier } from './classifier/HybridClassifier';
 import { AlphaVantageAdapter } from './sources/AlphaVantageAdapter';
 import { ICorporateActionSource, RawCorporateActionEvent } from './sources/ICorporateActionSource';
 
@@ -47,9 +47,10 @@ async function main() {
   }
 
   const deduplicator = new EventDeduplicator(new Logger('ingestion', 'Deduplicator'));
-  const classifier = new EventClassifier(new Logger('ingestion', 'Classifier'));
+  const classifier = new HybridClassifier(redis, new Logger('ingestion', 'HybridClassifier'));
 
   logger.info('Ingestion service starting', { sourceCount: sources.length });
+  logger.info('AI agent status', { enabled: !!process.env.ANTHROPIC_API_KEY });
 
   // Poll all sources
   const allEvents: RawCorporateActionEvent[] = [];
@@ -104,7 +105,7 @@ async function main() {
 
   // Classify
   for (const event of unique) {
-    const classification = classifier.classify(event);
+    const classification = await classifier.classify(event);
     if (classification) {
       registry.counter('corpaction_events_classified_total', 'Events classified', { action_type: classification.actionType });
       await redis.xadd(

@@ -8,6 +8,13 @@ optimizer_runs = 200
 via_ir = true
 ffi = false
 evm_version = "cancun"
+remappings = [
+    "@openzeppelin/contracts/=lib/openzeppelin-contracts/contracts/",
+    "@openzeppelin/contracts-upgradeable/=lib/openzeppelin-contracts-upgradeable/contracts/",
+    "forge-std/=lib/forge-std/src/",
+    "@chainlink/=lib/chainlink/",
+    "@layerzerolabs/=lib/LayerZero-v2/",
+]
 
 [profile.default.fuzz]
 runs = 1000

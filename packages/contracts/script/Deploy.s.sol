@@ -15,6 +15,9 @@ import {SpinoffExecutor} from "../src/executors/SpinoffExecutor.sol";
 import {DelistingManager} from "../src/executors/DelistingManager.sol";
 import {TickerMigrator} from "../src/executors/TickerMigrator.sol";
 import {ICorpActionTypes} from "../src/interfaces/ICorpActionTypes.sol";
+import {ChainlinkPriceAdapter} from "../src/integrations/ChainlinkPriceAdapter.sol";
+import {CrossChainNotifier} from "../src/integrations/CrossChainNotifier.sol";
+import {CrossChainReceiver} from "../src/integrations/CrossChainReceiver.sol";
 
 contract Deploy is Script {
     function run() external {
@@ -22,6 +25,7 @@ contract Deploy is Script {
         address deployer = vm.addr(deployerKey);
         address treasury = vm.envOr("TREASURY", deployer);
         address usdc = vm.envOr("USDC_ADDRESS", address(0));
+        address lzEndpoint = vm.envOr("LZ_ENDPOINT", deployer); // LayerZero endpoint; defaults to deployer as placeholder
 
         console2.log("Deployer:", deployer);
         console2.log("Treasury:", treasury);
@@ -123,17 +127,21 @@ contract Deploy is Script {
         console2.log("SpinoffExecutor:", address(spinoffProxy));
         registry.registerExecutor(ICorpActionTypes.ActionType.SPINOFF, address(spinoffProxy));
 
-        // 10. Deploy DelistingManager
+        // 10. Deploy ChainlinkPriceAdapter (non-proxy, Ownable)
+        ChainlinkPriceAdapter priceAdapter = new ChainlinkPriceAdapter(deployer);
+        console2.log("ChainlinkPriceAdapter:", address(priceAdapter));
+
+        // 11. Deploy DelistingManager (with ChainlinkPriceAdapter integration)
         DelistingManager delistImpl = new DelistingManager();
         bytes memory delistInit = abi.encodeWithSelector(
-            DelistingManager.initialize.selector, address(registry)
+            DelistingManager.initialize.selector, address(registry), address(priceAdapter)
         );
         ERC1967Proxy delistProxy = new ERC1967Proxy(address(delistImpl), delistInit);
         console2.log("DelistingManager:", address(delistProxy));
         registry.registerExecutor(ICorpActionTypes.ActionType.DELISTING, address(delistProxy));
         registry.registerExecutor(ICorpActionTypes.ActionType.LIQUIDATION, address(delistProxy));
 
-        // 11. Deploy TickerMigrator
+        // 12. Deploy TickerMigrator
         TickerMigrator tickerImpl = new TickerMigrator();
         bytes memory tickerInit = abi.encodeWithSelector(
             TickerMigrator.initialize.selector, address(registry)
@@ -141,6 +149,14 @@ contract Deploy is Script {
         ERC1967Proxy tickerProxy = new ERC1967Proxy(address(tickerImpl), tickerInit);
         console2.log("TickerMigrator:", address(tickerProxy));
         registry.registerExecutor(ICorpActionTypes.ActionType.TICKER_CHANGE, address(tickerProxy));
+
+        // 13. Deploy CrossChainNotifier (non-proxy, Ownable)
+        CrossChainNotifier notifier = new CrossChainNotifier(lzEndpoint, deployer);
+        console2.log("CrossChainNotifier:", address(notifier));
+
+        // 14. Deploy CrossChainReceiver (non-proxy, Ownable)
+        CrossChainReceiver receiver = new CrossChainReceiver(lzEndpoint, deployer);
+        console2.log("CrossChainReceiver:", address(receiver));
 
         // Timelocks are managed by TimelockController (connected above).
         // The internal _timelocks mapping in ActionRegistry serves as a fallback

@@ -40,7 +40,7 @@ contract TWTR_DelistingTest is Test {
 
         DelistingManager impl = new DelistingManager();
         bytes memory initData = abi.encodeWithSelector(
-            DelistingManager.initialize.selector, registry
+            DelistingManager.initialize.selector, registry, address(0xBEEF)
         );
         ERC1967Proxy proxy = new ERC1967Proxy(address(impl), initData);
         mgr = DelistingManager(address(proxy));
