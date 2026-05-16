@@ -1,1 +1,1 @@
-export { EventDeduplicator } from '@corpaction/shared';
+export { EventDeduplicator, DeduplicationResult } from '@corpaction/shared';
