@@ -2,6 +2,9 @@
 
 **Tokenized Equity Corporate Action Automation Engine for Robinhood Chain / Arbitrum**
 
+[![Live Demo](https://img.shields.io/badge/Live%20Demo-2mxhf668.mule.page-blue?style=for-the-badge)](https://2mxhf668.mule.page/)
+[![Twitter](https://img.shields.io/badge/Twitter-@0xWangyangming-1DA1F2?style=for-the-badge&logo=x&logoColor=white)](https://x.com/0xWangyangming)
+
 ![License](https://img.shields.io/badge/license-MIT-blue.svg)
 ![Solidity](https://img.shields.io/badge/solidity-0.8.24-363636.svg)
 ![Foundry](https://img.shields.io/badge/built%20with-Foundry-FFDB1C.svg)
